@@ -84,6 +84,28 @@ class App(tk.Tk):
             foreground=[("disabled", FG_DIM)],
         )
 
+        style.configure("ToggleOn.TButton",
+            background=ACCENT,
+            foreground="#ffffff",
+            bordercolor=ACCENT,
+            relief="flat",
+            padding=(10, 5),
+        )
+        style.map("ToggleOn.TButton",
+            background=[("active", ACCENT2)],
+        )
+
+        style.configure("ToggleOff.TButton",
+            background=ENTRY,
+            foreground=FG_DIM,
+            bordercolor=SEL,
+            relief="flat",
+            padding=(10, 5),
+        )
+        style.map("ToggleOff.TButton",
+            background=[("active", SEL)],
+        )
+
         style.configure("TEntry",
             fieldbackground=ENTRY,
             foreground=FG,

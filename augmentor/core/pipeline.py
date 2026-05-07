@@ -72,6 +72,26 @@ def _apply_augmentations(
     return img, boxes
 
 
+def preview_augment(
+    img: np.ndarray,
+    boxes: List[BBox],
+    config: AugConfig,
+) -> Tuple[np.ndarray, List[BBox]]:
+    """Apply all enabled augmentations at configured values for live preview.
+    Uses midpoint of ranges for deterministic output. CutMix is skipped (needs two images)."""
+    if config.brightness_enabled:
+        delta = (config.brightness_min + config.brightness_max) // 2
+        img = apply_brightness(img, delta)
+    if config.blur_enabled:
+        img = apply_blur(img, config.blur_radius)
+    if config.noise_enabled:
+        img = apply_noise(img, config.noise_strength)
+    if config.scale_enabled:
+        scale = (config.scale_min + config.scale_max) / 2.0
+        img, boxes = apply_scale(img, boxes, scale)
+    return img, boxes
+
+
 def run_batch(
     images_dir: Path,
     labels_dir: Path,
