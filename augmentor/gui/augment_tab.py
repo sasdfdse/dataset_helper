@@ -110,10 +110,10 @@ class AugmentTab(ttk.Frame):
         ttk.Label(img_frame, text="Original").grid(row=0, column=0)
         ttk.Label(img_frame, text="Augmented").grid(row=0, column=1)
 
-        self._orig_lbl = ttk.Label(img_frame, background="#1e1e1e")
+        self._orig_lbl = ttk.Label(img_frame, background="#313244")
         self._orig_lbl.grid(row=1, column=0, padx=4, pady=4, sticky="nsew")
 
-        self._aug_lbl = ttk.Label(img_frame, background="#1e1e1e")
+        self._aug_lbl = ttk.Label(img_frame, background="#313244")
         self._aug_lbl.grid(row=1, column=1, padx=4, pady=4, sticky="nsew")
 
         nav_frame = ttk.Frame(img_frame)
