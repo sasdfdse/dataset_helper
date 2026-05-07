@@ -79,7 +79,10 @@ def run_batch(
     progress_cb: Callable[[int, int], None],
 ) -> None:
     originals = _collect_originals(images_dir)
-    cutmix_count = config.cutmix_pairs if config.cutmix_enabled else 0
+    if config.cutmix_enabled:
+        cutmix_count = config.cutmix_pairs
+    else:
+        cutmix_count = 0
     total = len(originals) * config.multiplier + cutmix_count
     done = 0
 
