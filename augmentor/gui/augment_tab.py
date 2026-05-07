@@ -80,7 +80,7 @@ class AugmentTab(ttk.Frame):
         ttk.Entry(frame, textvariable=self._labels_var, width=22).grid(row=3, column=0, sticky="ew")
         ttk.Button(frame, text="Browse", command=self._browse_labels).grid(row=3, column=1, padx=(4, 0))
 
-        ttk.Separator(frame, orient="horizontal").grid(row=4, column=0, columnspan=2, sticky="ew", pady=8)
+        ttk.Separator(frame, orient="horizontal").grid(row=4, column=0, columnspan=3, sticky="ew", pady=8)
 
         row = 5
         row = self._aug_section(frame, row, "Brightness", "brightness",
@@ -94,7 +94,7 @@ class AugmentTab(ttk.Frame):
         row = self._aug_section(frame, row, "CutMix", "cutmix",
                                 [("pairs", 1, 100, 10)])
 
-        ttk.Separator(frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=8)
+        ttk.Separator(frame, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", pady=8)
         row += 1
 
         ttk.Label(frame, text="Multiplier (×):").grid(row=row, column=0, sticky="w")
@@ -103,6 +103,7 @@ class AugmentTab(ttk.Frame):
             row=row, column=1, sticky="w")
 
         frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(2, weight=0)
 
     def _aug_section(self, parent, row: int, label: str, key: str, params) -> int:
         enabled_var = tk.BooleanVar(value=False)
@@ -120,6 +121,8 @@ class AugmentTab(ttk.Frame):
             var.trace_add("write", self._on_control_changed)
             ttk.Scale(parent, from_=lo, to=hi, variable=var, orient="horizontal").grid(
                 row=row, column=1, sticky="ew")
+            ttk.Label(parent, textvariable=var, width=4, anchor="e").grid(
+                row=row, column=2, sticky="e", padx=(2, 0))
             row += 1
         return row
 
