@@ -200,7 +200,10 @@ class AugmentTab(ttk.Frame):
             self.after(0, self._on_error, str(exc))
 
     def _on_progress(self, done: int, total: int):
-        pct = (done / total * 100) if total > 0 else 100
+        if total > 0:
+            pct = done / total * 100
+        else:
+            pct = 100.0
         self.after(0, self._update_progress, pct, done, total)
 
     def _update_progress(self, pct: float, done: int, total: int):
