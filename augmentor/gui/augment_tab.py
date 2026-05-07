@@ -145,12 +145,14 @@ class AugmentTab(ttk.Frame):
         if path:
             self._images_var.set(path)
             self._images_dir = Path(path)
+            self._load_originals_preview()
 
     def _browse_labels(self):
         path = filedialog.askdirectory(title="Select labels/ folder")
         if path:
             self._labels_var.set(path)
             self._labels_dir = Path(path)
+            self._load_originals_preview()
 
     # ── Run ─────────────────────────────────────────────────────────
 
@@ -223,6 +225,23 @@ class AugmentTab(ttk.Frame):
         messagebox.showerror("Augmentation Error", msg)
 
     # ── Preview ──────────────────────────────────────────────────────
+
+    def _load_originals_preview(self):
+        if self._images_dir is None:
+            return
+        originals = _collect_originals(self._images_dir)
+        if not originals:
+            return
+        self._preview_pairs = []
+        for img_path in originals:
+            if self._labels_dir is not None:
+                lbl_path = self._labels_dir / (img_path.stem + ".txt")
+            else:
+                lbl_path = Path("/nonexistent")
+            self._preview_pairs.append((img_path, lbl_path, img_path, lbl_path))
+        self._preview_idx = 0
+        self._show_preview(0)
+        self._status_lbl.configure(text=f"원본 {len(originals)}장 로드됨")
 
     def _load_preview_list(self):
         if self._images_dir is None:
