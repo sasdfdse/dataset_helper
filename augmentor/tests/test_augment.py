@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 from core.label import BBox
-from core.augment import apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix, apply_flip, apply_rotation, apply_crop
+from core.augment import (
+    apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix,
+    apply_flip, apply_rotation, apply_crop,
+    apply_shear,
+)
 
 
 def _solid_img(value: int = 128, h: int = 100, w: int = 100) -> np.ndarray:
@@ -221,4 +225,28 @@ def test_crop_keeps_fully_inside_box():
 def test_crop_output_dtype():
     img = _solid_img()
     out_img, _ = apply_crop(img, [], 0.9)
+    assert out_img.dtype == np.uint8
+
+
+# --- shear ---
+
+def test_shear_preserves_shape():
+    img = _solid_img()
+    boxes = [BBox(0, 0.5, 0.5, 0.3, 0.3)]
+    out_img, out_boxes = apply_shear(img, boxes, 10, 0)
+    assert out_img.shape == img.shape
+
+
+def test_shear_zero_keeps_center_box():
+    img = _solid_img()
+    boxes = [BBox(0, 0.5, 0.5, 0.3, 0.3)]
+    _, out_boxes = apply_shear(img, boxes, 0, 0)
+    assert len(out_boxes) == 1
+    assert abs(out_boxes[0].x - 0.5) < 0.01
+    assert abs(out_boxes[0].y - 0.5) < 0.01
+
+
+def test_shear_output_dtype():
+    img = _solid_img()
+    out_img, _ = apply_shear(img, [], 5, 5)
     assert out_img.dtype == np.uint8
