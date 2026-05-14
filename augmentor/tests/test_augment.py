@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from core.label import BBox
-from core.augment import apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix, apply_flip, apply_rotation
+from core.augment import apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix, apply_flip, apply_rotation, apply_crop
 
 
 def _solid_img(value: int = 128, h: int = 100, w: int = 100) -> np.ndarray:
@@ -198,4 +198,27 @@ def test_rotation_out_of_bounds_box_removed():
 def test_rotation_output_dtype():
     img = _solid_img()
     out_img, _ = apply_rotation(img, [], 30)
+    assert out_img.dtype == np.uint8
+
+
+# --- crop ---
+
+def test_crop_preserves_shape():
+    img = _solid_img()
+    boxes = [BBox(0, 0.5, 0.5, 0.3, 0.3)]
+    out_img, out_boxes = apply_crop(img, boxes, 0.8)
+    assert out_img.shape == img.shape
+
+
+def test_crop_keeps_fully_inside_box():
+    img = _solid_img()
+    # crop_ratio=1.0 means no crop happens
+    boxes = [BBox(0, 0.5, 0.5, 0.3, 0.3)]
+    _, out_boxes = apply_crop(img, boxes, 1.0)
+    assert len(out_boxes) == 1
+
+
+def test_crop_output_dtype():
+    img = _solid_img()
+    out_img, _ = apply_crop(img, [], 0.9)
     assert out_img.dtype == np.uint8

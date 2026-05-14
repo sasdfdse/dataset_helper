@@ -95,6 +95,44 @@ def apply_flip(
     return img, new_boxes
 
 
+def apply_crop(
+    img: np.ndarray,
+    boxes: List[BBox],
+    crop_ratio: float,
+) -> Tuple[np.ndarray, List[BBox]]:
+    h, w = img.shape[:2]
+    ch, cw = int(h * crop_ratio), int(w * crop_ratio)
+    ch, cw = max(ch, 1), max(cw, 1)
+    x_off = random.randint(0, w - cw)
+    y_off = random.randint(0, h - ch)
+
+    cropped = img[y_off:y_off + ch, x_off:x_off + cw]
+    out = cv2.resize(cropped, (w, h))
+
+    rx1 = x_off / w
+    ry1 = y_off / h
+    rx2 = (x_off + cw) / w
+    ry2 = (y_off + ch) / h
+
+    new_boxes = []
+    for b in boxes:
+        bx1 = max(b.x - b.w / 2, rx1)
+        by1 = max(b.y - b.h / 2, ry1)
+        bx2 = min(b.x + b.w / 2, rx2)
+        by2 = min(b.y + b.h / 2, ry2)
+        if bx2 <= bx1 or by2 <= by1:
+            continue
+        orig_area = b.w * b.h
+        if orig_area > 0 and (bx2 - bx1) * (by2 - by1) / orig_area < 0.3:
+            continue
+        nx1 = (bx1 - rx1) / crop_ratio
+        ny1 = (by1 - ry1) / crop_ratio
+        nx2 = (bx2 - rx1) / crop_ratio
+        ny2 = (by2 - ry1) / crop_ratio
+        new_boxes.append(BBox(b.cls, (nx1 + nx2) / 2, (ny1 + ny2) / 2, nx2 - nx1, ny2 - ny1))
+    return out, new_boxes
+
+
 def apply_rotation(
     img: np.ndarray,
     boxes: List[BBox],
