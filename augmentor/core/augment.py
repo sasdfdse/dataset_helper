@@ -220,3 +220,18 @@ def apply_exposure(img: np.ndarray, factor: float) -> np.ndarray:
 def apply_camera_gain(img: np.ndarray, gain: float) -> np.ndarray:
     result = img.astype(np.float32) * gain
     return np.clip(result, 0, 255).astype(np.uint8)
+
+
+def apply_motion_blur(img: np.ndarray, kernel_size: int, angle: float) -> np.ndarray:
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    kernel_size = max(kernel_size, 3)
+    k = np.zeros((kernel_size, kernel_size), dtype=np.float32)
+    k[kernel_size // 2, :] = 1.0 / kernel_size
+    cx, cy = kernel_size / 2.0, kernel_size / 2.0
+    M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+    k = cv2.warpAffine(k, M, (kernel_size, kernel_size))
+    total = k.sum()
+    if total > 0:
+        k /= total
+    return cv2.filter2D(img, -1, k)

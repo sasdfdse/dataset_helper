@@ -6,6 +6,7 @@ from core.augment import (
     apply_flip, apply_rotation, apply_crop,
     apply_shear,
     apply_grayscale, apply_saturation, apply_exposure, apply_camera_gain,
+    apply_motion_blur,
 )
 
 
@@ -312,3 +313,26 @@ def test_camera_gain_clips_at_255():
     img = _solid_img(200)
     result = apply_camera_gain(img, 2.0)
     assert int(result.max()) <= 255
+
+
+# --- motion_blur ---
+
+def test_motion_blur_preserves_shape():
+    img = _solid_img()
+    result = apply_motion_blur(img, 15, 0)
+    assert result.shape == img.shape
+    assert result.dtype == np.uint8
+
+
+def test_motion_blur_even_kernel_accepted():
+    img = _solid_img()
+    result = apply_motion_blur(img, 4, 0)  # internally promoted to 5
+    assert result.shape == img.shape
+
+
+def test_motion_blur_blurs_image():
+    img = np.zeros((50, 50, 3), dtype=np.uint8)
+    img[:, 25:] = 255  # half white
+    result = apply_motion_blur(img, 15, 0)
+    # The sharp edge should be smoothed
+    assert int(result[25, 20, 0]) != int(img[25, 20, 0]) or int(result[25, 30, 0]) != int(img[25, 30, 0])
