@@ -7,6 +7,7 @@ from core.augment import (
     apply_shear,
     apply_grayscale, apply_saturation, apply_exposure, apply_camera_gain,
     apply_motion_blur,
+    apply_mosaic,
 )
 
 
@@ -336,3 +337,38 @@ def test_motion_blur_blurs_image():
     result = apply_motion_blur(img, 15, 0)
     # The sharp edge should be smoothed
     assert int(result[25, 20, 0]) != int(img[25, 20, 0]) or int(result[25, 30, 0]) != int(img[25, 30, 0])
+
+
+# --- mosaic ---
+
+def test_mosaic_preserves_shape():
+    imgs = [_solid_img(i * 50) for i in range(4)]
+    boxes_list = [[BBox(0, 0.5, 0.5, 0.3, 0.3)] for _ in range(4)]
+    out_img, out_boxes = apply_mosaic(imgs, boxes_list)
+    assert out_img.shape == imgs[0].shape
+    assert out_img.dtype == np.uint8
+
+
+def test_mosaic_returns_boxes():
+    imgs = [_solid_img(i * 50) for i in range(4)]
+    boxes_list = [[BBox(0, 0.5, 0.5, 0.3, 0.3)] for _ in range(4)]
+    _, out_boxes = apply_mosaic(imgs, boxes_list)
+    assert isinstance(out_boxes, list)
+
+
+def test_mosaic_combines_distinct_colors():
+    imgs = [_solid_img(0), _solid_img(255), _solid_img(128), _solid_img(64)]
+    boxes_list = [[] for _ in range(4)]
+    out_img, _ = apply_mosaic(imgs, boxes_list)
+    assert int(out_img.max()) != int(out_img.min())
+
+
+def test_mosaic_boxes_normalized():
+    imgs = [_solid_img(i * 50) for i in range(4)]
+    boxes_list = [[BBox(0, 0.5, 0.5, 0.3, 0.3)] for _ in range(4)]
+    _, out_boxes = apply_mosaic(imgs, boxes_list)
+    for b in out_boxes:
+        assert 0.0 <= b.x <= 1.0
+        assert 0.0 <= b.y <= 1.0
+        assert 0.0 < b.w <= 1.0
+        assert 0.0 < b.h <= 1.0

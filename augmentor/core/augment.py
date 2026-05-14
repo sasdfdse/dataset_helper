@@ -235,3 +235,73 @@ def apply_motion_blur(img: np.ndarray, kernel_size: int, angle: float) -> np.nda
     if total > 0:
         k /= total
     return cv2.filter2D(img, -1, k)
+
+
+def apply_mosaic(
+    imgs: List[np.ndarray],
+    boxes_list: List[List[BBox]],
+) -> Tuple[np.ndarray, List[BBox]]:
+    """YOLOv5-style 4-image mosaic. imgs must contain exactly 4 images."""
+    h, w = imgs[0].shape[:2]
+    imgs = [cv2.resize(im, (w, h)) if im.shape[:2] != (h, w) else im for im in imgs]
+
+    cx = random.randint(int(0.4 * w), int(0.6 * w))
+    cy = random.randint(int(0.4 * h), int(0.6 * h))
+
+    canvas = np.zeros((2 * h, 2 * w, 3), dtype=np.uint8)
+    quad_regions = [
+        (0, 0, cx, cy),
+        (cx, 0, 2 * w, cy),
+        (0, cy, cx, 2 * h),
+        (cx, cy, 2 * w, 2 * h),
+    ]
+
+    canvas_boxes: List[BBox] = []
+    for (x1, y1, x2, y2), img_i, boxes_i in zip(quad_regions, imgs, boxes_list):
+        pw, ph = x2 - x1, y2 - y1
+        if pw <= 0 or ph <= 0:
+            continue
+        canvas[y1:y2, x1:x2] = cv2.resize(img_i, (pw, ph))
+        for b in boxes_i:
+            nx = (x1 + b.x * pw) / (2 * w)
+            ny = (y1 + b.y * ph) / (2 * h)
+            nw_c = b.w * pw / (2 * w)
+            nh_c = b.h * ph / (2 * h)
+            canvas_boxes.append(BBox(b.cls, nx, ny, nw_c, nh_c))
+
+    crop_x1 = max(cx - w // 2, 0)
+    crop_y1 = max(cy - h // 2, 0)
+    crop_x2 = min(cx + w // 2, 2 * w)
+    crop_y2 = min(cy + h // 2, 2 * h)
+    out = canvas[crop_y1:crop_y2, crop_x1:crop_x2]
+    if out.shape[:2] != (h, w):
+        out = cv2.resize(out, (w, h))
+
+    crx1 = crop_x1 / (2 * w)
+    cry1 = crop_y1 / (2 * h)
+    crx2 = crop_x2 / (2 * w)
+    cry2 = crop_y2 / (2 * h)
+    cr_w = crx2 - crx1
+    cr_h = cry2 - cry1
+
+    new_boxes: List[BBox] = []
+    for b in canvas_boxes:
+        bx1 = b.x - b.w / 2
+        by1 = b.y - b.h / 2
+        bx2 = b.x + b.w / 2
+        by2 = b.y + b.h / 2
+        cx1_c = max(bx1, crx1)
+        cy1_c = max(by1, cry1)
+        cx2_c = min(bx2, crx2)
+        cy2_c = min(by2, cry2)
+        if cx2_c <= cx1_c or cy2_c <= cy1_c:
+            continue
+        orig_area = b.w * b.h
+        if orig_area > 0 and (cx2_c - cx1_c) * (cy2_c - cy1_c) / orig_area < 0.3:
+            continue
+        nx1 = (cx1_c - crx1) / cr_w
+        ny1 = (cy1_c - cry1) / cr_h
+        nx2 = (cx2_c - crx1) / cr_w
+        ny2 = (cy2_c - cry1) / cr_h
+        new_boxes.append(BBox(b.cls, (nx1 + nx2) / 2, (ny1 + ny2) / 2, nx2 - nx1, ny2 - ny1))
+    return out, new_boxes
