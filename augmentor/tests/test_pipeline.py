@@ -79,3 +79,23 @@ def test_run_batch_no_augmentations_no_output(tmp_path):
     # With no augmentations enabled, _apply_augmentations returns original unchanged
     aug_imgs = list(images_dir.glob("*_aug*.jpg"))
     assert len(aug_imgs) == 4  # files are still created, just unmodified
+
+
+def test_run_batch_mosaic_creates_files(tmp_path):
+    images_dir, labels_dir = _make_dataset(tmp_path, n=4)
+    config = AugConfig(mosaic_enabled=True, mosaic_pairs=3, multiplier=0)
+    run_batch(images_dir, labels_dir, config, progress_cb=_noop)
+    mosaic_imgs = list(images_dir.glob("*_mosaic_*.jpg"))
+    assert len(mosaic_imgs) == 3
+
+
+def test_collect_originals_excludes_mosaic(tmp_path):
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    (images_dir / "real.jpg").touch()
+    (images_dir / "real_aug1.jpg").touch()
+    (images_dir / "a_b_cutmix_1.jpg").touch()
+    (images_dir / "a_b_c_d_mosaic_1.jpg").touch()
+    result = _collect_originals(images_dir)
+    assert len(result) == 1
+    assert result[0].name == "real.jpg"
