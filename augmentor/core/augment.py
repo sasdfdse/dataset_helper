@@ -75,3 +75,21 @@ def apply_cutmix(
     new_b = transform_bboxes_cutmix_b(boxes_b, rx1, ry1, rx2, ry2)
 
     return result, kept_a + new_b
+
+
+def apply_flip(
+    img: np.ndarray,
+    boxes: List[BBox],
+    horizontal: bool,
+    vertical: bool,
+) -> Tuple[np.ndarray, List[BBox]]:
+    if horizontal:
+        img = cv2.flip(img, 1)
+    if vertical:
+        img = cv2.flip(img, 0)
+    new_boxes = []
+    for b in boxes:
+        x = (1.0 - b.x) if horizontal else b.x
+        y = (1.0 - b.y) if vertical else b.y
+        new_boxes.append(BBox(b.cls, x, y, b.w, b.h))
+    return img, new_boxes

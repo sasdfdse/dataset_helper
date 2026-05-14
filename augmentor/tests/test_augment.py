@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from core.label import BBox
-from core.augment import apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix
+from core.augment import apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix, apply_flip
 
 
 def _solid_img(value: int = 128, h: int = 100, w: int = 100) -> np.ndarray:
@@ -110,3 +110,44 @@ def test_cutmix_patch_region_differs():
     # Some pixels should be 255 (from B) and some 0 (from A)
     assert int(out_img.max()) == 255
     assert int(out_img.min()) == 0
+
+
+# --- flip ---
+
+def test_flip_horizontal_updates_x():
+    img = _solid_img()
+    boxes = [BBox(0, 0.2, 0.5, 0.1, 0.1)]
+    out_img, out_boxes = apply_flip(img, boxes, horizontal=True, vertical=False)
+    assert out_img.shape == img.shape
+    assert abs(out_boxes[0].x - 0.8) < 1e-6  # 1 - 0.2
+
+
+def test_flip_vertical_updates_y():
+    img = _solid_img()
+    boxes = [BBox(0, 0.5, 0.3, 0.1, 0.1)]
+    out_img, out_boxes = apply_flip(img, boxes, horizontal=False, vertical=True)
+    assert abs(out_boxes[0].y - 0.7) < 1e-6  # 1 - 0.3
+
+
+def test_flip_both_updates_x_and_y():
+    img = _solid_img()
+    boxes = [BBox(0, 0.2, 0.3, 0.1, 0.1)]
+    _, out_boxes = apply_flip(img, boxes, horizontal=True, vertical=True)
+    assert abs(out_boxes[0].x - 0.8) < 1e-6
+    assert abs(out_boxes[0].y - 0.7) < 1e-6
+
+
+def test_flip_preserves_size_and_w_h():
+    img = _solid_img()
+    boxes = [BBox(0, 0.5, 0.5, 0.3, 0.2)]
+    _, out_boxes = apply_flip(img, boxes, horizontal=True, vertical=True)
+    assert abs(out_boxes[0].w - 0.3) < 1e-6
+    assert abs(out_boxes[0].h - 0.2) < 1e-6
+
+
+def test_flip_horizontal_mirrors_pixels():
+    img = np.zeros((10, 10, 3), dtype=np.uint8)
+    img[:, 0] = 255  # left column bright
+    out_img, _ = apply_flip(img, [], horizontal=True, vertical=False)
+    assert int(out_img[0, 9, 0]) == 255  # right column should now be bright
+    assert int(out_img[0, 0, 0]) == 0
