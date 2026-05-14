@@ -151,3 +151,11 @@ def test_flip_horizontal_mirrors_pixels():
     out_img, _ = apply_flip(img, [], horizontal=True, vertical=False)
     assert int(out_img[0, 9, 0]) == 255  # right column should now be bright
     assert int(out_img[0, 0, 0]) == 0
+
+
+def test_flip_vertical_mirrors_pixels():
+    img = np.zeros((10, 10, 3), dtype=np.uint8)
+    img[0, :] = 255  # top row bright
+    out_img, _ = apply_flip(img, [], horizontal=False, vertical=True)
+    assert int(out_img[9, 0, 0]) == 255  # bottom row should now be bright
+    assert int(out_img[0, 0, 0]) == 0
