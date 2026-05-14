@@ -198,3 +198,25 @@ def apply_shear(
         if nw > 0 and nh > 0:
             new_boxes.append(BBox(b.cls, (rx1 + rx2) / 2, (ry1 + ry2) / 2, nw, nh))
     return out, new_boxes
+
+
+def apply_grayscale(img: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+
+def apply_saturation(img: np.ndarray, factor: float) -> np.ndarray:
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1] * factor, 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
+def apply_exposure(img: np.ndarray, factor: float) -> np.ndarray:
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[:, :, 2] = np.clip(hsv[:, :, 2] * factor, 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
+def apply_camera_gain(img: np.ndarray, gain: float) -> np.ndarray:
+    result = img.astype(np.float32) * gain
+    return np.clip(result, 0, 255).astype(np.uint8)

@@ -5,6 +5,7 @@ from core.augment import (
     apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix,
     apply_flip, apply_rotation, apply_crop,
     apply_shear,
+    apply_grayscale, apply_saturation, apply_exposure, apply_camera_gain,
 )
 
 
@@ -250,3 +251,64 @@ def test_shear_output_dtype():
     img = _solid_img()
     out_img, _ = apply_shear(img, [], 5, 5)
     assert out_img.dtype == np.uint8
+
+
+# --- grayscale ---
+
+def test_grayscale_preserves_shape():
+    img = np.array([[[100, 150, 200]]], dtype=np.uint8)
+    result = apply_grayscale(img)
+    assert result.shape == img.shape
+
+
+def test_grayscale_all_channels_equal():
+    img = np.array([[[50, 100, 200]]], dtype=np.uint8)
+    result = apply_grayscale(img)
+    assert int(result[0, 0, 0]) == int(result[0, 0, 1]) == int(result[0, 0, 2])
+
+
+# --- saturation ---
+
+def test_saturation_preserves_shape():
+    img = _solid_img(128)
+    result = apply_saturation(img, 1.5)
+    assert result.shape == img.shape
+    assert result.dtype == np.uint8
+
+
+def test_saturation_zero_desaturates():
+    img = np.zeros((10, 10, 3), dtype=np.uint8)
+    img[:, :] = [0, 0, 200]
+    result = apply_saturation(img, 0.0)
+    assert int(result[0, 0, 0]) == int(result[0, 0, 1]) == int(result[0, 0, 2])
+
+
+# --- exposure ---
+
+def test_exposure_preserves_shape():
+    img = _solid_img(100)
+    result = apply_exposure(img, 1.5)
+    assert result.shape == img.shape
+    assert result.dtype == np.uint8
+
+
+def test_exposure_clips_at_255():
+    img = _solid_img(200)
+    result = apply_exposure(img, 2.0)
+    assert int(result.max()) <= 255
+
+
+# --- camera_gain ---
+
+def test_camera_gain_increases_brightness():
+    img = _solid_img(100)
+    result = apply_camera_gain(img, 1.5)
+    assert result.shape == img.shape
+    assert result.dtype == np.uint8
+    assert int(result.mean()) >= 100
+
+
+def test_camera_gain_clips_at_255():
+    img = _solid_img(200)
+    result = apply_camera_gain(img, 2.0)
+    assert int(result.max()) <= 255
