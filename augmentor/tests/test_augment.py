@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from core.label import BBox
-from core.augment import apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix, apply_flip
+from core.augment import apply_brightness, apply_blur, apply_noise, apply_scale, apply_cutmix, apply_flip, apply_rotation
 
 
 def _solid_img(value: int = 128, h: int = 100, w: int = 100) -> np.ndarray:
@@ -159,3 +159,43 @@ def test_flip_vertical_mirrors_pixels():
     out_img, _ = apply_flip(img, [], horizontal=False, vertical=True)
     assert int(out_img[9, 0, 0]) == 255  # bottom row should now be bright
     assert int(out_img[0, 0, 0]) == 0
+
+
+# --- rotation ---
+
+def test_rotation_preserves_shape():
+    img = _solid_img()
+    boxes = [BBox(0, 0.5, 0.5, 0.3, 0.3)]
+    out_img, out_boxes = apply_rotation(img, boxes, 45)
+    assert out_img.shape == img.shape
+
+
+def test_rotation_zero_keeps_center_box():
+    img = _solid_img()
+    boxes = [BBox(0, 0.5, 0.5, 0.3, 0.3)]
+    _, out_boxes = apply_rotation(img, boxes, 0)
+    assert len(out_boxes) == 1
+    assert abs(out_boxes[0].x - 0.5) < 0.01
+    assert abs(out_boxes[0].y - 0.5) < 0.01
+
+
+def test_rotation_90_center_box_stays_near_center():
+    img = _solid_img(h=100, w=100)
+    boxes = [BBox(0, 0.5, 0.5, 0.4, 0.2)]
+    _, out_boxes = apply_rotation(img, boxes, 90)
+    assert len(out_boxes) == 1
+    assert abs(out_boxes[0].x - 0.5) < 0.05
+    assert abs(out_boxes[0].y - 0.5) < 0.05
+
+
+def test_rotation_out_of_bounds_box_removed():
+    img = _solid_img()
+    boxes = [BBox(0, 0.02, 0.02, 0.02, 0.02)]
+    _, out_boxes = apply_rotation(img, boxes, 45)
+    assert isinstance(out_boxes, list)
+
+
+def test_rotation_output_dtype():
+    img = _solid_img()
+    out_img, _ = apply_rotation(img, [], 30)
+    assert out_img.dtype == np.uint8

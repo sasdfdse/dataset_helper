@@ -93,3 +93,34 @@ def apply_flip(
         y = (1.0 - b.y) if vertical else b.y
         new_boxes.append(BBox(b.cls, x, y, b.w, b.h))
     return img, new_boxes
+
+
+def apply_rotation(
+    img: np.ndarray,
+    boxes: List[BBox],
+    angle: float,
+) -> Tuple[np.ndarray, List[BBox]]:
+    h, w = img.shape[:2]
+    cx, cy = w / 2.0, h / 2.0
+    M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+    rotated = cv2.warpAffine(img, M, (w, h), borderValue=(0, 0, 0))
+
+    new_boxes = []
+    for b in boxes:
+        bx1 = (b.x - b.w / 2) * w
+        by1 = (b.y - b.h / 2) * h
+        bx2 = (b.x + b.w / 2) * w
+        by2 = (b.y + b.h / 2) * h
+        corners = np.array(
+            [[bx1, by1], [bx2, by1], [bx2, by2], [bx1, by2]], dtype=np.float32
+        )
+        ones = np.ones((4, 1), dtype=np.float32)
+        rotated_corners = (M @ np.hstack([corners, ones]).T).T
+        rx1 = float(np.clip(rotated_corners[:, 0].min() / w, 0.0, 1.0))
+        ry1 = float(np.clip(rotated_corners[:, 1].min() / h, 0.0, 1.0))
+        rx2 = float(np.clip(rotated_corners[:, 0].max() / w, 0.0, 1.0))
+        ry2 = float(np.clip(rotated_corners[:, 1].max() / h, 0.0, 1.0))
+        nw, nh = rx2 - rx1, ry2 - ry1
+        if nw > 0 and nh > 0:
+            new_boxes.append(BBox(b.cls, (rx1 + rx2) / 2, (ry1 + ry2) / 2, nw, nh))
+    return rotated, new_boxes
