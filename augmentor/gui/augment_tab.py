@@ -67,8 +67,33 @@ class AugmentTab(ttk.Frame):
         self._build_preview(self)
 
     def _build_settings(self, parent) -> None:
-        frame = ttk.LabelFrame(parent, text="Settings", padding=8)
-        frame.grid(row=0, column=0, sticky="nsew", padx=(6, 3), pady=6)
+        outer = ttk.LabelFrame(parent, text="Settings", padding=4)
+        outer.grid(row=0, column=0, sticky="nsew", padx=(6, 3), pady=6)
+        outer.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, borderwidth=0, highlightthickness=0, width=260)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        frame = ttk.Frame(canvas, padding=4)
+        frame_id = canvas.create_window((0, 0), window=frame, anchor="nw")
+
+        def _on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(frame_id, width=event.width)
+
+        frame.bind("<Configure>", _on_frame_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         ttk.Label(frame, text="images/ folder:").grid(row=0, column=0, sticky="w")
         self._images_var = tk.StringVar()
@@ -91,7 +116,26 @@ class AugmentTab(ttk.Frame):
                                 [("strength", 0, 100, 25)])
         row = self._aug_section(frame, row, "Scale", "scale",
                                 [("min ×", 50, 200, 80), ("max ×", 50, 200, 120)])
+        row = self._aug_section(frame, row, "Flip H", "flip_h", [])
+        row = self._aug_section(frame, row, "Flip V", "flip_v", [])
+        row = self._aug_section(frame, row, "Rotation", "rotation",
+                                [("min_deg", -180, 180, -45), ("max_deg", -180, 180, 45)])
+        row = self._aug_section(frame, row, "Crop", "crop",
+                                [("min_pct", 50, 99, 70), ("max_pct", 50, 99, 95)])
+        row = self._aug_section(frame, row, "Shear", "shear",
+                                [("min_deg", -45, 45, -15), ("max_deg", -45, 45, 15)])
+        row = self._aug_section(frame, row, "Grayscale", "grayscale", [])
+        row = self._aug_section(frame, row, "Saturation", "saturation",
+                                [("min_pct", 0, 200, 50), ("max_pct", 0, 200, 150)])
+        row = self._aug_section(frame, row, "Exposure", "exposure",
+                                [("min_pct", 0, 200, 50), ("max_pct", 0, 200, 150)])
+        row = self._aug_section(frame, row, "Motion Blur", "motion_blur",
+                                [("kernel", 3, 31, 15), ("ang_min", 0, 360, 0), ("ang_max", 0, 360, 360)])
+        row = self._aug_section(frame, row, "Camera Gain", "camera_gain",
+                                [("min_pct", 0, 200, 80), ("max_pct", 0, 200, 120)])
         row = self._aug_section(frame, row, "CutMix", "cutmix",
+                                [("pairs", 1, 100, 10)])
+        row = self._aug_section(frame, row, "Mosaic", "mosaic",
                                 [("pairs", 1, 100, 10)])
 
         ttk.Separator(frame, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", pady=8)
@@ -315,6 +359,33 @@ class AugmentTab(ttk.Frame):
             cutmix_enabled=self._cutmix_enabled.get(),
             cutmix_pairs=self._cutmix_pairs_var.get(),
             multiplier=self._multiplier_var.get(),
+            flip_h_enabled=self._flip_h_enabled.get(),
+            flip_v_enabled=self._flip_v_enabled.get(),
+            rotation_enabled=self._rotation_enabled.get(),
+            rotation_min=self._rotation_min_deg_var.get(),
+            rotation_max=self._rotation_max_deg_var.get(),
+            crop_enabled=self._crop_enabled.get(),
+            crop_min=self._crop_min_pct_var.get(),
+            crop_max=self._crop_max_pct_var.get(),
+            shear_enabled=self._shear_enabled.get(),
+            shear_min=self._shear_min_deg_var.get(),
+            shear_max=self._shear_max_deg_var.get(),
+            grayscale_enabled=self._grayscale_enabled.get(),
+            saturation_enabled=self._saturation_enabled.get(),
+            saturation_min=self._saturation_min_pct_var.get(),
+            saturation_max=self._saturation_max_pct_var.get(),
+            exposure_enabled=self._exposure_enabled.get(),
+            exposure_min=self._exposure_min_pct_var.get(),
+            exposure_max=self._exposure_max_pct_var.get(),
+            motion_blur_enabled=self._motion_blur_enabled.get(),
+            motion_blur_kernel=self._motion_blur_kernel_var.get(),
+            motion_blur_angle_min=self._motion_blur_ang_min_var.get(),
+            motion_blur_angle_max=self._motion_blur_ang_max_var.get(),
+            camera_gain_enabled=self._camera_gain_enabled.get(),
+            camera_gain_min=self._camera_gain_min_pct_var.get(),
+            camera_gain_max=self._camera_gain_max_pct_var.get(),
+            mosaic_enabled=self._mosaic_enabled.get(),
+            mosaic_pairs=self._mosaic_pairs_var.get(),
         )
 
     def _run_worker(self, config: AugConfig) -> None:
@@ -360,12 +431,12 @@ class AugmentTab(ttk.Frame):
             return
         aug_imgs = sorted(
             p for p in self._images_dir.glob("*.jpg")
-            if "_aug" in p.stem or "_cutmix" in p.stem
+            if "_aug" in p.stem or "_cutmix" in p.stem or "_mosaic" in p.stem
         )
         self._result_pairs = []
         for aug_path in aug_imgs:
             aug_lbl = self._labels_dir / (aug_path.stem + ".txt")
-            if "_cutmix" in aug_path.stem:
+            if "_cutmix" in aug_path.stem or "_mosaic" in aug_path.stem:
                 orig_path = aug_path
                 orig_lbl = aug_lbl
             else:
