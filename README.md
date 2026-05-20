@@ -5,6 +5,14 @@
 
 This package has two functions: one converts .webm files to .mp4, and the other extracts video frames and saves them as RGB or grayscale images.
 
-**build : 1. Move to this package directory, 2. bash build.sh**
+**python dependency install : 
 
-**run : ./video_tool_qt**
+1. pip install -r requirements.txt
+
+**build : 
+1. cd ~/ws/src/dataset_helper/augmentator
+2. bash build.sh
+
+**run : 
+1. python3 main.py
+
