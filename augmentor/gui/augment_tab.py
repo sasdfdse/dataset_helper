@@ -458,7 +458,7 @@ class AugmentTab(ttk.Frame):
         result = img.copy()
         h, w = result.shape[:2]
         for i, b in enumerate(boxes):
-            color_hex = _BBOX_COLORS[i % len(_BBOX_COLORS)]
+            color_hex = _BBOX_COLORS[b.cls % len(_BBOX_COLORS)]
             color_bgr = tuple(int(color_hex[j:j + 2], 16) for j in (5, 3, 1))
             x1 = int((b.x - b.w / 2) * w)
             y1 = int((b.y - b.h / 2) * h)

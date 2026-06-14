@@ -69,6 +69,7 @@ def convert_to_mp4(
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
+        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
         "-c:v", "libx264",
         "-c:a", "aac",
         "-progress", "pipe:1",
@@ -78,7 +79,7 @@ def convert_to_mp4(
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
     )
     for line in proc.stdout:
@@ -93,7 +94,8 @@ def convert_to_mp4(
                 pass
     proc.wait()
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg exited with code {proc.returncode}")
+        stderr_output = proc.stderr.read()
+        raise RuntimeError(f"ffmpeg exited with code {proc.returncode}\n{stderr_output}")
     progress_cb(100)
 
 

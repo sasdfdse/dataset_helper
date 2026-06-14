@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# pytest
+.pytest_cache/
+
+# C++ build
+*.o
+*.moc
+moc_predefs.h
+
+# Qt build
+*.qmake.stash
+Makefile_qt
