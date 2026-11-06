@@ -99,3 +99,20 @@ def test_load_class_names_yaml_list_and_missing(tmp_path):
 def test_load_class_names_txt(tmp_path):
     (tmp_path / "classes.txt").write_text(" a \n\nb\n  \n")
     assert load_class_names(tmp_path / "classes.txt") == ["a", "b"]
+
+
+def test_load_class_names_yaml_non_int_keys_returns_empty(tmp_path):
+    (tmp_path / "data.yaml").write_text("names: {a: x}\n")
+    assert load_class_names(tmp_path / "data.yaml") == []
+
+
+def test_load_class_names_malformed_yaml_returns_empty(tmp_path):
+    (tmp_path / "data.yaml").write_text("names: [a, b\n  : : {\n")
+    assert load_class_names(tmp_path / "data.yaml") == []
+
+
+def test_load_class_names_non_utf8_returns_empty(tmp_path):
+    (tmp_path / "classes.txt").write_bytes(b"\xff\xfe\x80bad\n")
+    (tmp_path / "data.yaml").write_bytes(b"names: [\xff\xfe]\n")
+    assert load_class_names(tmp_path / "classes.txt") == []
+    assert load_class_names(tmp_path / "data.yaml") == []

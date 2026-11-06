@@ -22,13 +22,19 @@ def find_class_names_file(images_dir: Path, labels_dir: Path) -> Path | None:
 
 
 def load_class_names(path: Path) -> list[str]:
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return []
     if path.suffix.lower() in (".yaml", ".yml"):
-        data = yaml.safe_load(text)
-        names = data.get("names") if isinstance(data, dict) else None
-        if isinstance(names, list):
-            return [str(n) for n in names]
-        if isinstance(names, dict):
-            return [str(names[k]) for k in sorted(names, key=int)]
+        try:
+            data = yaml.safe_load(text)
+            names = data.get("names") if isinstance(data, dict) else None
+            if isinstance(names, list):
+                return [str(n) for n in names]
+            if isinstance(names, dict):
+                return [str(names[k]) for k in sorted(names, key=int)]
+        except (yaml.YAMLError, ValueError, TypeError):
+            return []
         return []
     return [line.strip() for line in text.splitlines() if line.strip()]
