@@ -153,3 +153,45 @@ def test_draw_boxes_returns_copy_with_class_color():
     out = draw_boxes(img, [BBox(0, 0.5, 0.5, 0.5, 0.5)])
     assert img.sum() == 0
     assert tuple(out[5, 10]) == (0x44, 0x44, 0xFF)   # "#FF4444" → BGR
+
+
+class _ShortValidator(FakeValidator):
+    """이미지 수보다 1개 적은 응답을 반환하는 고장난 검증기."""
+
+    def judge_batch(self, images_rgb, prompt):
+        return super().judge_batch(images_rgb, prompt)[:-1]
+
+
+class _ShortPromptGen:
+    def generate_batch(self, requests):
+        return ["a gym"] * (len(requests) - 1)
+
+
+def test_short_vlm_response_list_raises(tmp_path):
+    s = _settings(tmp_path, n_images=3, num_variants=1, max_attempts=1)
+    f = FakeFactory.default(validator=_ShortValidator([_vlm(True)]))
+    with pytest.raises(ValueError, match="validate"):
+        BackgroundSwapWorkflow(s, f, NullProgress(), []).run()
+    assert read_jsonl(s.output_dir/"Manifest.jsonl") == []
+    assert not (s.output_dir/"Accepted").exists()
+
+
+def test_short_prompt_response_list_raises(tmp_path):
+    s = _settings(tmp_path, n_images=3, num_variants=1, max_attempts=1, use_vlm=False)
+    f = FakeFactory.default(prompt_gen=_ShortPromptGen())
+    with pytest.raises(ValueError, match="prompts"):
+        BackgroundSwapWorkflow(s, f, NullProgress(), []).run()
+    assert read_jsonl(s.output_dir/"jobs.jsonl") == []
+    assert read_jsonl(s.output_dir/"Manifest.jsonl") == []
+
+
+def test_vlm_pairing_across_batch_boundary(tmp_path):
+    ok, bad = _vlm(True), _vlm(False)
+    s = _settings(tmp_path, n_images=5, num_variants=1, max_attempts=1)
+    v = FakeValidator([ok, ok, ok, ok, bad])
+    BackgroundSwapWorkflow(s, FakeFactory.default(validator=v), NullProgress(), []).run()
+    m = read_jsonl(s.output_dir/"Manifest.jsonl")
+    assert [n for n, _ in v.calls] == [4, 1]
+    jobs = [(r["stem"], r["status"]) for r in m if r["status"] in ("accepted", "rejected")]
+    assert jobs == [("img_000", "accepted"), ("img_001", "accepted"), ("img_002", "accepted"),
+                    ("img_003", "accepted"), ("img_004", "rejected")]

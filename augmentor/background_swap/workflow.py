@@ -59,6 +59,14 @@ def _key(stem: str, variant, attempt) -> tuple:
     return (stem, variant, attempt)
 
 
+def _check_count(stage: str, what: str, expected: int, got: list) -> list:
+    """모델 배치 출력 수가 입력 수와 다르면 조용히 잘라내지 않고 실패한다."""
+    if len(got) != expected:
+        raise ValueError(f"{stage} stage: {what} returned {len(got)} results "
+                         f"for {expected} inputs")
+    return got
+
+
 class BackgroundSwapWorkflow:
     def __init__(self, settings: BackgroundSwapSettings, factory: ModelFactory,
                  progress: Progress, class_names: list[str],
@@ -278,10 +286,10 @@ class BackgroundSwapWorkflow:
         neg = negative_prompt(self.class_names)
         for i in range(0, len(todo), PROMPT_BATCH):
             batch = todo[i:i + PROMPT_BATCH]
-            raws = gen.generate_batch(
+            raws = _check_count("prompts", "generate_batch", len(batch), gen.generate_batch(
                 [PromptRequest(scene=dict(scene), keep_names=list(keep_names), seed=seed)
-                 for _, _, seed, scene in batch])
-            for (stem, n, seed, scene), raw in zip(batch, raws):
+                 for _, _, seed, scene in batch]))
+            for (stem, n, seed, scene), raw in zip(batch, raws, strict=True):
                 job = Job(stem=stem, variant=n, attempt=k, seed=seed, scene=dict(scene),
                           prompt=sanitize_prompt(raw, self.class_names), negative_prompt=neg)
                 append_jsonl(self.jobs_path, job.to_dict())
@@ -342,7 +350,9 @@ class BackgroundSwapWorkflow:
                     batch = todo[i:i + VLM_BATCH]
                     images = [cv2.cvtColor(draw_boxes(self._load_generated(j), self._labels(j.stem)),
                                            cv2.COLOR_BGR2RGB) for j in batch]
-                    for j, text in zip(batch, validator.judge_batch(images, prompt)):
+                    texts = _check_count("validate", "judge_batch", len(batch),
+                                         validator.judge_batch(images, prompt))
+                    for j, text in zip(batch, texts, strict=True):
                         vlm[_key(j.stem, j.variant, j.attempt)] = text
 
         for job in todo:
@@ -353,8 +363,8 @@ class BackgroundSwapWorkflow:
             reasons, checks = rule_checks(orig, out, masks.protect, masks.inpaint,
                                           self.settings.min_change)
             result = combine(reasons, checks,
-                             gdino.get(key) if self.class_names else None,
-                             vlm.get(key) if self.settings.use_vlm else None)
+                             gdino[key] if self.class_names else None,
+                             vlm[key] if self.settings.use_vlm else None)
             self._write_result(job, out, result.accepted)
             self._append_manifest(self._record(
                 job.stem, job, status=ACCEPTED if result.accepted else REJECTED,
