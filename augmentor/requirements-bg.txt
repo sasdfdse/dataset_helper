@@ -1,0 +1,9 @@
+# Background Swap augmentation dependencies.
+# torch는 CUDA 버전에 맞게 별도 설치 (e.g. torch 2.13+cu130). 이 파일은 torch를 설치/교체하지 않는다.
+transformers>=4.56
+diffusers>=0.35
+accelerate
+bitsandbytes
+huggingface_hub
+safetensors
+brotli>=1.2  # huggingface_hub 2.x (httpx2) 다운로드가 구버전 시스템 brotli(1.1.0)에서 실패함
