@@ -63,9 +63,10 @@ class AugConfig:
 
 def _collect_originals(images_dir: Path) -> List[Path]:
     all_imgs = list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png"))
+    excluded = ("_aug", "_cutmix", "_mosaic", "_bgswap")
     result = []
     for p in all_imgs:
-        if "_aug" not in p.stem and "_cutmix" not in p.stem and "_mosaic" not in p.stem:
+        if not any(tag in p.stem for tag in excluded):
             result.append(p)
     return sorted(result)
 

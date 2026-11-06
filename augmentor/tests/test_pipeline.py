@@ -99,3 +99,9 @@ def test_collect_originals_excludes_mosaic(tmp_path):
     result = _collect_originals(images_dir)
     assert len(result) == 1
     assert result[0].name == "real.jpg"
+
+
+def test_collect_originals_excludes_bgswap(tmp_path):
+    (tmp_path / "a.jpg").touch()
+    (tmp_path / "a_bgswap1.jpg").touch()
+    assert [p.name for p in _collect_originals(tmp_path)] == ["a.jpg"]
