@@ -15,7 +15,8 @@ import dataclasses
 import json
 import random
 import shutil
-from contextlib import AbstractContextManager
+import time
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Protocol
 
@@ -31,6 +32,7 @@ from .inpaint import Inpainter, run_inpaint
 from .inputs import collect_items, load_image_bgr
 from .masks import Segmenter, TextDetector, bbox_to_xyxy, build_mask_set
 from .progress import Progress
+from .report import class_recall, merge_recall, write_report
 from .prompts import (PromptGenerator, PromptRequest, TemplatePromptGenerator, derive_seed,
                       negative_prompt, sample_scene, sanitize_prompt)
 from .settings import BackgroundSwapSettings
@@ -122,7 +124,8 @@ class BackgroundSwapWorkflow:
         self.out.mkdir(parents=True, exist_ok=True)
         self._load_manifest_index()
         self._stage_inputs()
-        self._stage_masks()
+        with self._timed("masks"):
+            self._stage_masks()
         active = [stem for stem in self._items
                   if stem in self._mask_meta and self._mask_meta[stem].get("skip_reason") is None]
         variants = range(1, self.settings.num_variants + 1)
@@ -134,15 +137,45 @@ class BackgroundSwapWorkflow:
                 # 이 라운드는 이미 끝났다(재개). 이전 실행이 라운드 k 이후에 중단됐을 수 있으므로
                 # 종료하지 않고 다음 라운드로 넘어간다 — 대상이 없으면 아무 모델도 열지 않는다.
                 continue
-            jobs = self._stage_prompts(targets, k)
-            self._stage_inpaint(jobs)
-            self._stage_validate(jobs)
+            with self._timed("prompts"):
+                jobs = self._stage_prompts(targets, k)
+            with self._timed("inpaint"):
+                self._stage_inpaint(jobs)
+            with self._timed("validate"):
+                self._stage_validate(jobs)
         for stem in active:
             for n in variants:
                 if (stem, n) not in self._accepted and (stem, n) not in self._exhausted:
                     self._append_manifest(self._record(
                         stem, None, status=EXHAUSTED, reasons=[], checks={},
                         warnings=self._warnings(stem), variant=n))
+        self.progress.stage("report", 1)
+        t0 = time.perf_counter()
+        write_report(self.out)
+        # 리포트 자신의 소요 시간은 report.json 작성 뒤에 누적한다(다음 실행의 리포트에 반영).
+        self._add_timing("report", time.perf_counter() - t0)
+        self.progress.advance()
+
+    # ── 단계별 소요 시간 ───────────────────────────────────────────
+
+    @property
+    def timings_path(self) -> Path:
+        return self.out / "timings.json"
+
+    def _add_timing(self, stage: str, seconds: float) -> None:
+        timings: dict[str, float] = {}
+        if self.timings_path.exists():
+            timings = json.loads(self.timings_path.read_text(encoding="utf-8"))
+        timings[stage] = timings.get(stage, 0.0) + seconds
+        atomic_write_text(self.timings_path, json.dumps(timings, ensure_ascii=False))
+
+    @contextmanager
+    def _timed(self, stage: str):
+        t0 = time.perf_counter()
+        try:
+            yield
+        finally:
+            self._add_timing(stage, time.perf_counter() - t0)
 
     # ── Manifest ───────────────────────────────────────────────────
 
@@ -223,12 +256,40 @@ class BackgroundSwapWorkflow:
             else:
                 todo.append(it)
         self.progress.stage("masks", len(todo))
+        need_recall = bool(self.class_names) and not self.recall_path.exists()
         if not todo:
+            if need_recall:
+                with self.factory.detector() as detector:
+                    self._compute_recall(detector)
             return
         with self.factory.mask_models() as (segmenter, detector):
             for it in todo:
                 self._make_masks(it, segmenter, detector)
                 self.progress.advance()
+            if need_recall:   # 같은 컨텍스트의 detector 재사용 (추가 컨텍스트 없음)
+                self._compute_recall(detector)
+
+    @property
+    def recall_path(self) -> Path:
+        return self.out / "recall.json"
+
+    def _compute_recall(self, detector: TextDetector) -> None:
+        """스킵되지 않은 모든 항목의 원본에 GDINO를 돌려 클래스별 [hits, total]을 recall.json에 쓴다."""
+        total: dict[str, list[int]] = {name: [0, 0] for name in self.class_names}
+        for it in self._items.values():
+            if self._mask_meta.get(it.stem, {}).get("skip_reason", "missing") is not None:
+                continue
+            img = load_image_bgr(it.image_path)
+            if img is None:
+                continue
+            h, w = img.shape[:2]
+            dets = detector.detect(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), list(self.class_names),
+                                   NEW_OBJ_BOX_THRESHOLD, NEW_OBJ_TEXT_THRESHOLD)
+            boxes = [(b.cls, xyxy) for b in read_labels(it.label_path)
+                     if 0 <= b.cls < len(self.class_names)
+                     and (xyxy := bbox_to_xyxy(b, w, h, 0.0)) is not None]
+            total = merge_recall(total, class_recall(boxes, dets, self.class_names))
+        atomic_write_text(self.recall_path, json.dumps(total, ensure_ascii=False))
 
     def _make_masks(self, it: ImageItem, segmenter: Segmenter, detector: TextDetector) -> None:
         img = load_image_bgr(it.image_path)

@@ -1,3 +1,5 @@
+import json
+
 import cv2
 import numpy as np
 import pytest
@@ -195,3 +197,51 @@ def test_vlm_pairing_across_batch_boundary(tmp_path):
     jobs = [(r["stem"], r["status"]) for r in m if r["status"] in ("accepted", "rejected")]
     assert jobs == [("img_000", "accepted"), ("img_001", "accepted"), ("img_002", "accepted"),
                     ("img_003", "accepted"), ("img_004", "rejected")]
+
+
+# --- 리포트용 recall / timings ---
+
+def _robot_det():
+    # 라벨 "0 0.5 0.5 0.3 0.3" @ 64x48 → xyxy (22, 17, 41, 31)
+    return FakeDetector({"robot": [Detection((22, 17, 41, 31), 0.9, "robot")]})
+
+
+def test_recall_written_once_and_reuses_mask_context(tmp_path):
+    s = _settings(tmp_path, n_images=1, num_variants=1, max_attempts=1, use_vlm=False)
+    f = FakeFactory.default(detector=_robot_det())
+    BackgroundSwapWorkflow(s, f, NullProgress(), ["robot"]).run()
+    assert json.loads((s.output_dir/"recall.json").read_text()) == {"robot": [1, 1]}
+    assert f.opened.count("mask_models") == 1
+    # "detector" 컨텍스트는 validate 단계의 1회뿐 (recall용 추가 컨텍스트 없음)
+    assert f.opened.count("detector") == 1
+    f2 = FakeFactory.default(detector=_robot_det())
+    BackgroundSwapWorkflow(s, f2, NullProgress(), ["robot"]).run()
+    assert f2.opened == []
+    assert json.loads((s.output_dir/"recall.json").read_text()) == {"robot": [1, 1]}
+
+
+def test_recall_opens_detector_when_masks_already_done(tmp_path):
+    s = _settings(tmp_path, n_images=1, num_variants=1, max_attempts=1, use_vlm=False)
+    BackgroundSwapWorkflow(s, FakeFactory.default(), NullProgress(), []).run()
+    assert not (s.output_dir/"recall.json").exists()
+    f2 = FakeFactory.default(detector=_robot_det())
+    BackgroundSwapWorkflow(s, f2, NullProgress(), ["robot"]).run()
+    assert json.loads((s.output_dir/"recall.json").read_text()) == {"robot": [1, 1]}
+    # 결과가 모두 끝난 상태라 validate는 열리지 않음 → recall용 detector 1회뿐
+    assert f2.opened == ["detector"]
+
+
+def test_no_recall_without_class_names(tmp_path):
+    s = _settings(tmp_path, n_images=1, num_variants=1, use_vlm=False)
+    BackgroundSwapWorkflow(s, FakeFactory.default(), NullProgress(), []).run()
+    assert not (s.output_dir/"recall.json").exists()
+
+
+def test_timings_accumulate_across_runs(tmp_path):
+    s = _settings(tmp_path, n_images=1, num_variants=1, use_vlm=False)
+    BackgroundSwapWorkflow(s, FakeFactory.default(), NullProgress(), []).run()
+    t1 = json.loads((s.output_dir/"timings.json").read_text())
+    assert set(t1) >= {"masks", "prompts", "inpaint", "validate", "report"}
+    BackgroundSwapWorkflow(s, FakeFactory.default(), NullProgress(), []).run()
+    t2 = json.loads((s.output_dir/"timings.json").read_text())
+    assert all(t2[k] >= t1[k] for k in t1)
