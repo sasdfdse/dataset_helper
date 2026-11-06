@@ -9,8 +9,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Literal
 
-# 잠정값: Task 0 VRAM 실측(spike) 결과로 컨트롤러가 갱신한다.
-MAX_RESOLUTION_PX_DEFAULT = 1024
+# VRAM 실측(spike) 결과: docs/superpowers/notes/2026-11-06-vram-spike.md
+MAX_RESOLUTION_PX_DEFAULT = 1280
 
 DEFAULT_SCENE_AXES: dict[str, list[str]] = {
     "venue": [
