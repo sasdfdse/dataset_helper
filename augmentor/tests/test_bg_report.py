@@ -1,8 +1,10 @@
 import json
+import os
 
 import pytest
 
 from background_swap.domain import Detection
+from background_swap import export as export_mod
 from background_swap.export import ExportResult, NonTrainTargetError, export_accepted
 from background_swap.progress import NullProgress
 from background_swap.report import build_report, class_recall, merge_recall, write_report
@@ -106,6 +108,50 @@ def test_export_refuses_val_target(tmp_path):
     assert not (tmp_path / "val").exists()
     assert export_accepted(out, tmp_path / "val" / "images", tmp_path / "val" / "labels",
                            True).copied == 1
+
+
+def _dest(tmp_path):
+    imgs, lbls = tmp_path / "train" / "images", tmp_path / "train" / "labels"
+    imgs.mkdir(parents=True); lbls.mkdir()
+    return imgs, lbls
+
+
+@pytest.mark.parametrize("fail_at", ["label_copy", "label_replace"])
+def test_export_failure_mid_pair_leaves_no_half_pair(tmp_path, monkeypatch, fail_at):
+    out = _accepted(tmp_path, ["a_bgswap1"])
+    imgs, lbls = _dest(tmp_path)
+    if fail_at == "label_copy":
+        real = export_mod.shutil.copyfile
+
+        def bad_copy(src, dst, **kw):
+            if str(src).endswith(".txt"):
+                raise OSError("disk full")
+            return real(src, dst, **kw)
+        monkeypatch.setattr(export_mod.shutil, "copyfile", bad_copy)
+    else:
+        real = os.replace
+
+        def bad_replace(src, dst):
+            if str(dst).endswith(".txt"):
+                raise OSError("boom")
+            return real(src, dst)
+        monkeypatch.setattr(export_mod.os, "replace", bad_replace)
+    with pytest.raises(OSError):
+        export_accepted(out, imgs, lbls, False)
+    assert list(imgs.iterdir()) == [] and list(lbls.iterdir()) == []   # 임시 파일 포함 아무것도 없음
+    monkeypatch.undo()
+    assert export_accepted(out, imgs, lbls, False) == ExportResult(1, 0)
+    assert [p.name for p in imgs.iterdir()] == ["a_bgswap1.jpg"]
+    assert [p.name for p in lbls.iterdir()] == ["a_bgswap1.txt"]
+
+
+def test_export_files_have_normal_permissions(tmp_path):
+    out = _accepted(tmp_path, ["a_bgswap1"])
+    imgs, lbls = _dest(tmp_path)
+    export_accepted(out, imgs, lbls, False)
+    um = os.umask(0); os.umask(um)
+    for p in (imgs / "a_bgswap1.jpg", lbls / "a_bgswap1.txt"):
+        assert p.stat().st_mode & 0o777 == 0o666 & ~um
 
 
 def test_workflow_writes_report(tmp_path):
