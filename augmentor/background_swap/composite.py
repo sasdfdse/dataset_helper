@@ -4,9 +4,32 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from core.label import BBox
+
 _RED = (0, 0, 255)
 _ORANGE = (0, 140, 255)
 _GREEN = (0, 200, 0)
+
+# gui/augment_tab.py의 _BBOX_COLORS와 같은 값 (GUI 모듈 import를 피하려고 복사)
+_BBOX_COLORS = [
+    "#FF4444", "#44FF44", "#4444FF", "#FFFF44",
+    "#FF44FF", "#44FFFF", "#FF8844", "#44FF88",
+]
+
+
+def draw_boxes(img_bgr: np.ndarray, boxes: list[BBox]) -> np.ndarray:
+    """정규화 bbox를 클래스별 색 2px 사각형으로 그린 복사본 (AugmentTab._draw_bboxes와 같은 방식)."""
+    result = img_bgr.copy()
+    h, w = result.shape[:2]
+    for b in boxes:
+        color_hex = _BBOX_COLORS[b.cls % len(_BBOX_COLORS)]
+        color_bgr = tuple(int(color_hex[j:j + 2], 16) for j in (5, 3, 1))
+        x1 = int((b.x - b.w / 2) * w)
+        y1 = int((b.y - b.h / 2) * h)
+        x2 = int((b.x + b.w / 2) * w)
+        y2 = int((b.y + b.h / 2) * h)
+        cv2.rectangle(result, (x1, y1), (x2, y2), color_bgr, 2)
+    return result
 
 
 def alpha_map(protect: np.ndarray, feather_px: int) -> np.ndarray:
