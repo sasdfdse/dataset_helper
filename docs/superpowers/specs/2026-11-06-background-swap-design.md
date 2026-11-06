@@ -30,7 +30,7 @@ Gen-n-Val(`ws/src/Gen-n-Val`)의 "LLM 프롬프트 생성 → 이미지 생성 �
 - bbox → 객체 마스크(SAM2) + 그림자 영역 확장
 - 유지 배경 항목: **색상 영역 방식**(HSV + 옵션 convex hull) 또는 **텍스트 검출 방식**(Grounding DINO + SAM2), 항목별 필수/선택
 - LLM 장면 프롬프트 생성 (LLM 미사용 시 템플릿 폴백)
-- 인페인팅(SDXL 기본, SD1.5 대체 가능) + 보호 영역 원본 재합성
+- 인페인팅(SDXL 기본, SD1.5 대체 가능, 작업 해상도는 원본 해상도 기반 자동 결정) + 보호 영역 원본 재합성
 - 규칙 검사 + 새 객체 검사(GDINO + VLM) + VLM 구조화 검증
 - 단계별 재개, Manifest, 실행 리포트(상태/사유 집계, 장면 축 통계, GDINO 클래스별 recall), Accepted/Rejected 출력, 데이터셋으로 export
 - GUI "Background Swap" 탭 (설정 입력, 4패널 미리보기, 실행/중지, 결과 탐색, export)
@@ -157,7 +157,14 @@ Export                                      → 데이터셋 images/labels 폴�
 
 ### Stage 3 — 인페인팅 + 재합성
 - `diffusers.AutoPipelineForInpainting`으로 모델 ID에 맞는 파이프라인을 로드한다. 기본 `diffusers/stable-diffusion-xl-1.0-inpainting-0.1`, 대체 예: `stable-diffusion-v1-5/stable-diffusion-inpainting`. fp16, `enable_model_cpu_offload()`, VAE slicing/tiling 활성.
-- **작업 해상도** `resolution`(512 / 768 / 1024, 기본 768): 긴 변을 이 값으로 리사이즈(8의 배수) → strength 0.99, steps 30, guidance 7.0 → 원본 해상도로 복원. 기본값은 구현 초기 VRAM 실측(§11) 결과로 확정한다.
+- **작업 해상도는 이미지마다 원본 해상도에서 자동 결정**한다 (`resolution_mode = "auto"`, 기본).
+  1. 원본 크기(파일에서 읽음)에서 시작한다.
+  2. 긴 변이 모델의 기본 해상도(`model_native_px`: SDXL 1024, SD1.5 512 — 파이프라인 종류로 자동 판정)보다 작으면 그 값까지 업스케일한다. 기본 해상도보다 작게 생성하면 품질이 크게 떨어지기 때문이다.
+  3. 긴 변이 `max_resolution_px`(VRAM 상한, 기본값은 §11 실측으로 확정)보다 크면 그 값까지 다운스케일한다.
+  4. 가로세로 비율을 유지하고 각 변을 8의 배수로 맞춘다.
+  - 생성 후 **항상 원본 해상도로 복원**하므로 라벨 좌표와 보호 영역 합성은 원본 기준 그대로다.
+  - `resolution_mode = "manual"`이면 긴 변을 `manual_resolution_px`로 고정한다 (고급 설정, 실험용).
+- 생성 파라미터: strength 0.99, steps 30, guidance 7.0.
 - 인페인팅 모델에 주는 마스크 = `inpaint`.
 - 합성: 알파 `a`를 `object_protect ∪ keep` 내부는 1, 그 바깥으로 `feather_px`(기본 4px) 거리에 걸쳐 1→0으로 감소, 나머지 0으로 정의 → `out = a·orig + (1−a)·gen`. 따라서 **`object_protect ∪ keep` 내부 픽셀은 원본과 정확히 동일**하고, 페더는 인페인팅 영역 쪽 경계에만 생긴다.
 - **차이 이미지**: `|out − orig|`의 그레이 맵. 보호 영역에서 0이 아닌 픽셀은 빨강으로 표시 (정상이라면 없음 — 마스크/합성 버그 탐지용). Accepted/Rejected 미리보기와 GUI에서 사용.
@@ -205,7 +212,9 @@ Export                                      → 데이터셋 images/labels 폴�
 | 생성 | `seed` | 0 | Entry (정수) |
 | 생성 | `use_llm`, `use_vlm` | true, true | Checkbutton |
 | 장면 축 | `scene_axes: dict[str, list[str]]` | 아래 기본값 | 축별 항목 추가/삭제, 축 추가/삭제 |
-| 고급 (접힘) | `resolution` | 768 | Combobox (512/768/1024) |
+| 고급 (접힘) | `resolution_mode` | auto (원본 해상도 기반, §4 Stage 3) | Combobox (auto/manual) |
+| 고급 (접힘) | `max_resolution_px` | §11 실측으로 확정 | Spinbox |
+| 고급 (접힘) | `manual_resolution_px` | 1024 (manual일 때만 사용) | Spinbox |
 | 고급 (접힘) | `small_box_px`, `dilate_px`, `shadow_extend_ratio`, `feather_px`, `min_inpaint_ratio`, `min_change` | 32, 6, 0.15, 4, 0.15, 20 | Spinbox/Entry |
 | 고급 (접힘) | 모델 ID 5개 (`segmenter`, `detector`, `llm`, `inpainter`, `vlm`) | 아래 기본값 | Entry |
 
@@ -306,6 +315,6 @@ Export                                      → 데이터셋 images/labels 폴�
 
 ## 11. 구현 순서 원칙
 
-1. **VRAM 실측 스파이크** (버릴 코드): 512/768/1024 해상도에서 SDXL inpaint의 피크 VRAM·장당 시간, SD1.5 비교 → `resolution` 기본값 확정.
+1. **VRAM 실측 스파이크** (버릴 코드): 실제 데이터셋 이미지 크기 분포를 확인하고, 그 비율로 긴 변 512/768/1024/1280에서 SDXL inpaint의 피크 VRAM·장당 시간을 측정, SD1.5 비교 → `max_resolution_px` 기본값 확정.
 2. 설정/입력/마스크/color region + GUI 4패널 미리보기(마스크까지) — **생성 전에 소량 이미지로 마스크 정확도를 먼저 검증**.
 3. 프롬프트 → 인페인팅·합성 → 검증 → 재개/Manifest/Report → Export.
