@@ -1,6 +1,7 @@
-"""Background Swap 탭 (전반): 설정 패널, keep 항목 편집, 모델 없는 즉시 마스크 미리보기.
+"""Background Swap 탭: 설정 패널, keep 항목 편집, 즉시 마스크 미리보기,
+Run/Preview/Stop/Export(서브프로세스 워커), 진행 표시, 결과 4패널 탐색, Report.
 
-Run/Stop/결과/내보내기는 후속 Task에서 이 탭에 추가된다. torch/모델 코드는 import하지 않는다.
+torch/모델 코드는 import하지 않는다. 워커는 gui.worker_process, 결과/문구 로직은 gui.background_results.
 """
 import copy
 from pathlib import Path
@@ -16,13 +17,18 @@ from background_swap.classes import find_class_names_file
 from background_swap.composite import draw_boxes
 from background_swap.inputs import collect_items, load_image_bgr
 from background_swap.settings import BackgroundSwapSettings, KeepItem, ModelIds
+from background_swap.store import reset_output_dir
 from core.label import read_labels
 from gui import background_state
 from gui.augment_tab import _PREVIEW_SIZE
 from gui.background_state import (format_axis_values, load_ui_state,
                                   parse_axis_values, quick_mask_preview,
                                   save_ui_state, to_number as _to_number)
+from gui.background_results import (ResultList, build_result_list, describe_record,
+                                    index_originals, load_panels)
+from gui.background_run import PREVIEW_N, RunMixin
 from gui.keep_item_dialog import KeepItemDialog
+from gui.worker_process import WorkerProcess
 
 _PLACEHOLDER = "Preview 실행 후 표시"
 _DEBOUNCE_MS = 150
@@ -52,7 +58,7 @@ _PREVIEW_ATTRS = ("small_box_px", "dilate_px", "shadow_extend_ratio")
 _PATH_ATTRS = ("images_dir", "labels_dir", "output_dir", "class_names_file")
 
 
-class BackgroundTab(ttk.Frame):
+class BackgroundTab(RunMixin, ttk.Frame):
     def __init__(self, parent, state_path: Optional[Path] = None):
         super().__init__(parent)
         self._state_path = state_path
@@ -68,6 +74,13 @@ class BackgroundTab(ttk.Frame):
         self._axis_sel: Optional[str] = None
         self._vars: dict[str, tk.Variable] = {}
         self._wheel_widgets: list[tk.Misc] = []
+        self._worker: Optional[WorkerProcess] = None
+        self._job: dict = {}                       # 실행 중 작업 정보 (mode/out/stopping/error_shown/done)
+        self._results: Optional[ResultList] = None
+        self._result_dir: Optional[Path] = None
+        self._orig_index: dict = {}
+        self._ridx = 0
+        self._results_mode = False
         self._build_ui()
         try:
             self.apply_settings(load_ui_state(self._state_file()))
@@ -78,6 +91,13 @@ class BackgroundTab(ttk.Frame):
             self._status_lbl.configure(text="저장된 UI 상태를 읽을 수 없어 기본값으로 시작했습니다")
         self.bind("<Destroy>", self._on_destroy)
         self.winfo_toplevel().bind("<Escape>", self._cancel_pick, add="+")
+
+    # 시험/교체용 이음매 (RunMixin이 사용)
+    def _make_worker(self, args, on_event, on_exit) -> WorkerProcess:
+        return WorkerProcess(args, on_event, on_exit)
+
+    def _reset_output(self, output_dir: Path) -> None:
+        reset_output_dir(output_dir)
 
     def _state_file(self) -> Path:
         return self._state_path or background_state.UI_STATE_PATH
@@ -139,6 +159,9 @@ class BackgroundTab(ttk.Frame):
         if attr in ("images_dir", "labels_dir"):
             entry.bind("<Return>", lambda e: self._on_dirs_changed())
             entry.bind("<FocusOut>", lambda e: self._on_dirs_changed())
+        elif attr == "output_dir":
+            entry.bind("<Return>", lambda e: self._on_output_changed())
+            entry.bind("<FocusOut>", lambda e: self._on_output_changed())
 
     def _build_data_group(self, parent) -> ttk.LabelFrame:
         g = ttk.LabelFrame(parent, text="데이터", padding=4)
@@ -261,10 +284,33 @@ class BackgroundTab(ttk.Frame):
         self._nav_lbl = ttk.Label(nav, text="–")
         self._nav_lbl.pack(side=tk.LEFT)
         ttk.Button(nav, text="Next ▶", command=lambda: self._step(1)).pack(side=tk.LEFT, padx=8)
+        self._back_btn = ttk.Button(nav, text="마스크 미리보기로", command=self._leave_results)
+        self._back_btn.pack(side=tk.LEFT, padx=(16, 0))
 
         self._status_lbl = ttk.Label(frame, text="Images/Labels 폴더를 선택하세요")
         self._status_lbl.grid(row=2, column=0, pady=(2, 0))
-        self._right = frame     # Task 14: Run/Stop/결과 UI가 여기에 추가된다
+        self._detail_lbl = ttk.Label(frame, text="", wraplength=2 * _PREVIEW_SIZE[0], justify="left")
+        self._detail_lbl.grid(row=3, column=0, pady=(2, 0))
+        self._build_run_controls(frame)
+
+    def _build_run_controls(self, frame) -> None:
+        bar = ttk.Frame(frame)
+        bar.grid(row=4, column=0, pady=(6, 0))
+        specs = (("preview", f"Preview N={PREVIEW_N}", self._on_preview), ("run", "▶ Run", self._on_run),
+                 ("stop", "■ Stop", self._on_stop), ("report", "Report", self._on_report),
+                 ("export", "Export", self._on_export))
+        self._btns: dict[str, ttk.Button] = {}
+        for key, text, cmd in specs:
+            self._btns[key] = ttk.Button(bar, text=text, command=cmd)
+            self._btns[key].pack(side=tk.LEFT, padx=4)
+        self._btns["stop"].state(["disabled"])
+        prog = ttk.Frame(frame)
+        prog.grid(row=5, column=0, sticky="ew", pady=(6, 0))
+        prog.columnconfigure(1, weight=1)
+        self._stage_lbl = ttk.Label(prog, text="단계: –", width=22)
+        self._stage_lbl.grid(row=0, column=0, sticky="w")
+        self._progress = ttk.Progressbar(prog, mode="determinate", maximum=1, value=0)
+        self._progress.grid(row=0, column=1, sticky="ew")
 
     def _bind_wheel(self, widget) -> None:
         def scroll(delta):
@@ -301,7 +347,7 @@ class BackgroundTab(ttk.Frame):
             for k, _ in _MODEL_LABELS})
         kw["keep_items"] = copy.deepcopy(self._keep_items)
         kw["scene_axes"] = {name: parse_axis_values(var.get()) for name, var, _, _ in self._axis_rows}
-        kw["allow_non_train"] = prev.allow_non_train      # UI 노출 없음 (Task 14에서 다룸)
+        kw["allow_non_train"] = prev.allow_non_train      # UI 노출 없음: 실행별 확인 다이얼로그로만 설정
         self._last = BackgroundSwapSettings(**kw)
         return copy.deepcopy(self._last)
 
@@ -333,6 +379,8 @@ class BackgroundTab(ttk.Frame):
         if attr in ("images_dir", "labels_dir"):
             self._on_dirs_changed()
             self._autofill_classes()
+        elif attr == "output_dir":
+            self._on_output_changed()
 
     def _browse_classes(self) -> None:
         path = filedialog.askopenfilename(
@@ -354,6 +402,14 @@ class BackgroundTab(ttk.Frame):
     def _on_dirs_changed(self) -> None:
         self._reload_items()
         self._schedule_refresh()
+
+    def _on_output_changed(self) -> None:
+        """Output 폴더에 이전 결과(Manifest)가 있으면 바로 탐색할 수 있게 불러온다."""
+        text = self._vars["output_dir"].get().strip()
+        if not text or self.is_running() or Path(text) == self._result_dir:
+            return
+        if (Path(text) / "Manifest.jsonl").is_file():
+            self.load_results(Path(text))
 
     # ── Keep items ───────────────────────────────────────────────────
 
@@ -474,7 +530,11 @@ class BackgroundTab(ttk.Frame):
         return self._cur_img is not None
 
     def _step(self, d: int) -> None:
-        if self._items:
+        if self._results_mode:
+            n = len(self._results.entries)
+            self._ridx = (self._ridx + d) % n
+            self._show_result()
+        elif self._items:
             self._idx = (self._idx + d) % len(self._items)
             self.refresh_preview_now()
 
@@ -488,6 +548,8 @@ class BackgroundTab(ttk.Frame):
 
     def _refresh_preview(self) -> None:
         self._after_id = None
+        if self._results_mode:
+            return          # 결과 탐색 중에는 마스크 미리보기가 패널을 덮어쓰지 않는다
         self._reload_items()
         if not self._items:
             self._show_none("Images/Labels 폴더를 선택하세요 (이미지+라벨 쌍이 없습니다)")
@@ -544,11 +606,70 @@ class BackgroundTab(ttk.Frame):
         if self._items:
             self._status_lbl.configure(text=self._items[self._idx].image_path.name)
 
+    # ── Results ─────────────────────────────────────────────
+
+    def load_results(self, result_dir: Path) -> bool:
+        """result_dir(Manifest/Accepted/Rejected/masks)의 결과를 4패널 탐색 모드로 연다."""
+        rl = build_result_list(result_dir)
+        self._results, self._result_dir, self._ridx = rl, Path(result_dir), 0
+        images, labels = (self._vars[k].get().strip() for k in ("images_dir", "labels_dir"))
+        try:
+            self._orig_index = index_originals(Path(images), Path(labels)) if images and labels else {}
+        except Exception:
+            self._orig_index = {}
+        if not rl.entries:
+            self._leave_results()
+            self._status_lbl.configure(text=f"표시할 결과가 없습니다 ({rl.summary()})")
+            return False
+        self._results_mode = True
+        self._cur_img = None
+        self._show_result()
+        return True
+
+    def _leave_results(self) -> None:
+        was = self._results_mode
+        self._results_mode = False
+        for lbl in (self._result_lbl, self._diff_lbl):
+            self._set_panel(lbl, None, _PLACEHOLDER)
+        self._detail_lbl.configure(text="")
+        if was or self._cur_img is None:
+            self.refresh_preview_now()
+
+    def _set_panel(self, lbl: ttk.Label, bgr: Optional[np.ndarray], text: str = "") -> None:
+        if bgr is None:
+            lbl.configure(image="", text=text)
+            lbl.image = None
+            return
+        photo = self._to_photoimage(bgr)
+        lbl.configure(image=photo, text="")
+        lbl.image = photo
+
+    def _show_result(self) -> None:
+        rl = self._results
+        e = rl.entries[self._ridx]
+        self._nav_lbl.configure(text=f"{self._ridx + 1} / {len(rl.entries)}")
+        self._status_lbl.configure(text=f"{e.stem}  v{e.variant} a{e.attempt} [{e.status}]  ·  {rl.summary()}")
+        self._detail_lbl.configure(text=describe_record(e.record))
+        try:
+            item = self._orig_index.get(e.stem)
+            if item is None:
+                raise FileNotFoundError("원본 이미지를 찾을 수 없습니다 (Images/Labels 폴더를 확인하세요)")
+            p = load_panels(self._result_dir, e, item)
+        except Exception as ex:      # 파일 없음/손상: 패널에 사유만 표시
+            for lbl in (self._orig_lbl, self._mask_lbl, self._result_lbl, self._diff_lbl):
+                self._set_panel(lbl, None, str(ex)[:80])
+            return
+        for lbl, img in ((self._orig_lbl, p.orig), (self._mask_lbl, p.overlay),
+                         (self._result_lbl, p.result), (self._diff_lbl, p.diff)):
+            self._set_panel(lbl, img)
+
     # ── Lifecycle ────────────────────────────────────────────────────
 
     def _on_destroy(self, event) -> None:
         if event.widget is not self:
             return
+        if self._worker is not None:
+            self._worker.stop()
         if self._after_id is not None:
             try:
                 self.after_cancel(self._after_id)
