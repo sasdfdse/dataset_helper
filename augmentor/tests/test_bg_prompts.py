@@ -184,3 +184,9 @@ def test_template_prompt_skips_empty_values():
     req = PromptRequest({"a": "", "venue": "gym", "b": "  "}, [], 0)
     assert TemplatePromptGenerator().generate_batch([req]) == ["gym, photorealistic"]
     assert TemplatePromptGenerator().generate_batch([PromptRequest({"a": ""}, [], 0)]) == ["photorealistic"]
+
+
+def test_sanitize_removal_repeats_until_stable():
+    out = sanitize_prompt("a y x z b", ["x", "y z"])
+    assert "y z" not in out and "x" not in out.split()
+    assert out == "a b"

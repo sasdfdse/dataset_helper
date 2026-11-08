@@ -7,6 +7,7 @@ import pytest
 from background_swap.composite import draw_boxes
 from background_swap.domain import Detection
 from background_swap.progress import NullProgress
+from background_swap.prompts import PromptRequest, TemplatePromptGenerator, sanitize_prompt
 from background_swap.settings import KeepItem
 from background_swap.store import read_jsonl
 from background_swap.workflow import BackgroundSwapWorkflow, run_preview
@@ -185,6 +186,41 @@ def test_short_prompt_response_list_raises(tmp_path):
         BackgroundSwapWorkflow(s, f, NullProgress(), []).run()
     assert read_jsonl(s.output_dir/"jobs.jsonl") == []
     assert read_jsonl(s.output_dir/"Manifest.jsonl") == []
+
+
+class _FixedPromptGen:
+    def __init__(self, text):
+        self.text = text
+
+    def generate_batch(self, requests):
+        return [self.text] * len(requests)
+
+
+# 두 번째 출력은 밑줄/콜론이 없어 settings.scene_axes가 정확히 전달돼야만 걸러진다.
+@pytest.mark.parametrize("bad", ["Surroundings_floor: x", "venue, lighting"])
+def test_keyword_llm_output_falls_back_to_template(tmp_path, bad):
+    s = _settings(tmp_path, n_images=2, num_variants=2, use_llm=True, use_vlm=False)
+    f = FakeFactory.default(prompt_gen=_FixedPromptGen(bad))
+    BackgroundSwapWorkflow(s, f, NullProgress(), []).run()
+    assert "prompt_model" in f.opened
+    jobs = read_jsonl(s.output_dir/"jobs.jsonl")
+    assert len(jobs) == 4
+    for j in jobs:
+        tpl = TemplatePromptGenerator().generate_batch([PromptRequest(j["scene"], [], j["seed"])])[0]
+        assert j["prompt"] == sanitize_prompt(tpl, [])
+        assert j["prompt"] != bad
+    assert len({j["prompt"] for j in jobs}) > 1   # 장면별로 각자의 템플릿 사용
+
+
+def test_llm_output_class_names_removed_in_workflow(tmp_path):
+    s = _settings(tmp_path, n_images=1, num_variants=1, max_attempts=1, use_llm=True, use_vlm=False)
+    f = FakeFactory.default(prompt_gen=_FixedPromptGen(
+        "A bright sports hall with a Robot arena marking and tidy banners."))
+    BackgroundSwapWorkflow(s, f, NullProgress(), ["robot"]).run()
+    jobs = read_jsonl(s.output_dir/"jobs.jsonl")
+    assert len(jobs) == 1
+    assert "robot" not in jobs[0]["prompt"].lower()
+    assert jobs[0]["prompt"] == "A bright sports hall with a arena marking and tidy banners."
 
 
 def test_vlm_pairing_across_batch_boundary(tmp_path):

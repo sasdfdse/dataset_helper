@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 MAX_PROMPT_WORDS = 60
+MAX_SANITIZE_PASSES = 10
 QUALITY_NEGATIVES = ["blurry", "distorted", "text", "watermark", "extra objects"]
-
-_QUOTE_CHARS = "\"'“”‘’"
 
 LLM_SYSTEM_PROMPT = (
     "You write background descriptions for an SDXL inpainting model. "
@@ -83,10 +82,19 @@ def sanitize_prompt(text: str, class_names: list[str]) -> str:
     lines = [ln for ln in text.splitlines() if ln.strip()]
     out = _strip_matching_quotes(lines[0]) if lines else ""
     names = sorted({n.strip() for n in class_names if n and n.strip()}, key=len, reverse=True)
-    for name in names:
+    patterns = [
         # \b와 같지만 "c++"처럼 비단어 문자로 끝나는 이름도 다룬다.
-        body = r"\s+".join(re.escape(tok) for tok in name.split())
-        out = re.sub(rf"(?<!\w){body}(?!\w)", "", out, flags=re.IGNORECASE)
+        re.compile(rf"(?<!\w){r'\s+'.join(re.escape(t) for t in name.split())}(?!\w)",
+                   re.IGNORECASE)
+        for name in names
+    ]
+    # 제거 때문에 새로 붙은 단어가 다른 이름을 만들 수 있으므로 변화가 없을 때까지 반복한다.
+    for _ in range(MAX_SANITIZE_PASSES):
+        before = out
+        for pat in patterns:
+            out = pat.sub("", out)
+        if out == before:
+            break
     out = re.sub(r"\s+", " ", out)
     out = re.sub(r"\s+([,.])", r"\1", out)
     out = re.sub(r",(?:\s*,)+", ",", out)
