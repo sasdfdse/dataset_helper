@@ -418,6 +418,8 @@ def preflight(settings: BackgroundSwapSettings) -> list[str]:
     if not torch.cuda.is_available():
         problems.append("CUDA GPU를 사용할 수 없습니다. NVIDIA 드라이버와 CUDA용 torch 설치를 확인하세요.")
     for field, label in _MODEL_LABELS:
+        if (field == "llm" and not settings.use_llm) or (field == "vlm" and not settings.use_vlm):
+            continue   # 사용하지 않는 모델은 점검하지 않는다
         model_id = getattr(settings.models, field)
         filename = "model_index.json" if field == "inpainter" else "config.json"
         try:

@@ -177,3 +177,31 @@ def test_factory_releases_on_exception_in_body(M, monkeypatch):
         with _factory(M).validator():
             raise RuntimeError("body")
     assert log == [("init", "vlm"), ("close", "vlm")]
+
+
+@pytest.mark.parametrize("use_llm,use_vlm", [(True, True), (False, True), (True, False),
+                                             (False, False)])
+def test_preflight_skips_disabled_models(M, monkeypatch, use_llm, use_vlm):
+    import dataclasses
+    import huggingface_hub
+    from background_swap.common.settings import ModelIds
+    ids = ModelIds(segmenter="t/seg", detector="t/det", llm="t/llm", inpainter="t/inp",
+                   vlm="t/vlm")
+    checked: list[str] = []
+
+    def fake_cache(model_id, filename):
+        checked.append(model_id)
+        return None
+
+    def fake_info(model_id):
+        raise RuntimeError("offline")
+    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", fake_cache)
+    monkeypatch.setattr(huggingface_hub, "model_info", fake_info)
+    monkeypatch.setattr(M.torch.cuda, "is_available", lambda: True)
+    s = dataclasses.replace(BackgroundSwapSettings(), models=ids, use_llm=use_llm,
+                            use_vlm=use_vlm)
+    problems = M.preflight(s)
+    expected = ["t/seg", "t/det"] + (["t/llm"] if use_llm else []) + ["t/inp"] \
+        + (["t/vlm"] if use_vlm else [])
+    assert checked == expected
+    assert len(problems) == len(expected)   # 점검한 모델만 (오프라인) 문제로 보고
