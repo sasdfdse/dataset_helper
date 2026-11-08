@@ -76,7 +76,12 @@ class RunMixin:
                 return s
             choice = self._ask_mismatch(diff)
             if choice == "overwrite":
-                self._reset_output(Path(s.output_dir))
+                try:
+                    self._reset_output(Path(s.output_dir))
+                except OSError as e:
+                    messagebox.showerror("Error", f"기존 출력을 지울 수 없습니다: {s.output_dir}\n{e}",
+                                         parent=self)
+                    return None
                 return s
             if choice != "new":
                 return None
@@ -223,7 +228,7 @@ class RunMixin:
         elif job.get("error"):
             self._status_lbl.configure(text="실패 (오류 메시지 참고)")
         else:
-            msg = stderr_last or f"워커가 종료 코드 {code}로 종료되었습니다."
+            msg = f"워커가 종료 코드 {code}로 종료되었습니다." + (f"\n{stderr_last}" if stderr_last else "")
             self._status_lbl.configure(text=msg)
             messagebox.showerror("Error", msg, parent=self)
 

@@ -4,8 +4,9 @@ import cv2
 import numpy as np
 import pytest
 
+from background_swap.composite import diff_image
 from background_swap.store import imwrite_atomic, write_mask
-from gui.background_results import (build_result_list, describe_record, format_export_message,
+from gui.background_results import (DIFF_JPEG_NOTE, build_result_list, describe_record, format_export_message,
                                     format_report, index_originals, load_panels, load_report,
                                     result_image_path)
 
@@ -17,8 +18,9 @@ def make_output(tmp_path, with_files=True):
     images, labels, out = tmp_path / "images", tmp_path / "labels", tmp_path / "out"
     for d in (images, labels):
         d.mkdir()
-    orig = np.full((H, W, 3), 100, np.uint8)
-    cv2.imwrite(str(images / "a.jpg"), orig)
+    rng = np.random.default_rng(0)
+    orig = rng.integers(0, 256, (H, W, 3), dtype=np.uint8)      # 질감 있는 원본 (JPEG 오차가 드러나게)
+    cv2.imwrite(str(images / "a.png"), orig)
     (labels / "a.txt").write_text("0 0.5 0.5 0.4 0.4\n")
     core = np.zeros((H, W), bool)
     core[10:30, 20:40] = True
@@ -29,12 +31,15 @@ def make_output(tmp_path, with_files=True):
     for name, m in (("object_core", core), ("object_protect", protect), ("keep", keep),
                     ("inpaint", ~protect)):
         write_mask(out / "masks" / f"a_{name}.png", m)
-    acc = np.full((H, W, 3), 100, np.uint8)
-    acc[~(protect | keep)] = 200
-    imwrite_atomic(out / "Accepted" / "images" / "a_bgswap1.jpg", acc, 100)
+    acc = orig.copy()                                  # 보호 영역은 원본 그대로, 바깥은 새 배경
+    acc[~(protect | keep)] = rng.integers(0, 256, (int((~(protect | keep)).sum()), 3), dtype=np.uint8)
     rej = acc.copy()
-    rej[12:16, 22:26] = 0          # 보호 영역 내부 변경
-    imwrite_atomic(out / "Rejected" / "a_bgswap2_a1.jpg", rej, 100)
+    rej[12:16, 22:26] = (rej[12:16, 22:26].astype(np.int16) + 128).astype(np.uint8)   # 보호 영역 내부 변경
+    for name, img in (("a_bgswap1_a1", acc), ("a_bgswap2_a1", rej)):
+        (out / "generated").mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(out / "generated" / f"{name}.png"), img)      # 무손실 생성 결과
+    imwrite_atomic(out / "Accepted" / "images" / "a_bgswap1.jpg", acc, 95)
+    imwrite_atomic(out / "Rejected" / "a_bgswap2_a1.jpg", rej, 95)
     recs = [
         {"stem": "a", "variant": 1, "attempt": 1, "seed": 1, "scene": {"venue": "gym"},
          "prompt": "a gym", "status": "accepted", "reasons": [],
@@ -85,7 +90,7 @@ def test_load_panels_accepted_has_no_red_in_diff(tmp_path):
     for img in (p.orig, p.overlay, p.result, p.diff):
         assert img.shape == (H, W, 3) and img.dtype == np.uint8
     red = np.all(p.diff == (0, 0, 255), axis=2)
-    assert not red.any()
+    assert not red.any() and p.diff_note == ""
     assert p.diff[35, 5].max() > 0          # 바깥은 변경됨 (회색 차이)
     assert not np.array_equal(p.overlay, p.orig)
 
@@ -144,3 +149,33 @@ def test_format_export_message():
     assert "3" in format_export_message({"event": "done", "copied": 3, "skipped_existing": 2})
     assert "2" in format_export_message({"event": "done", "copied": 3, "skipped_existing": 2})
     assert format_export_message({"event": "done"})
+
+
+def _protect(out):
+    from background_swap.store import read_mask
+    return read_mask(out / "masks" / "a_object_protect.png") | read_mask(out / "masks" / "a_keep.png")
+
+
+def test_diff_uses_lossless_generated_png(tmp_path):
+    images, labels, out = make_output(tmp_path)
+    rl = build_result_list(out)
+    items = index_originals(images, labels)
+    orig = cv2.imread(str(images / "a.png"))
+    protect = _protect(out)
+    # 질감 이미지에서 JPEG q95 결과와 직접 비교하면 보호 영역이 빨갛게 나온다 (이 테스트가 민감한지 확인)
+    jpeg = cv2.imread(str(rl.entries[0].path))
+    assert np.all(diff_image(orig, jpeg, protect) == (0, 0, 255), axis=2)[protect].mean() > 0.5
+    p = load_panels(out, rl.entries[0], items["a"])
+    red = np.all(p.diff == (0, 0, 255), axis=2)
+    assert not red[protect].any() and p.diff_note == ""
+    # 패널 3(결과)은 계속 JPEG 결과 파일
+    assert np.array_equal(p.result, jpeg)
+
+
+def test_diff_falls_back_to_jpeg_when_png_missing(tmp_path):
+    images, labels, out = make_output(tmp_path)
+    rl = build_result_list(out)
+    (out / "generated" / "a_bgswap1_a1.png").unlink()
+    p = load_panels(out, rl.entries[0], index_originals(images, labels)["a"])
+    assert p.diff_note == DIFF_JPEG_NOTE and "JPEG" in p.diff_note
+    assert p.diff.shape == (H, W, 3)

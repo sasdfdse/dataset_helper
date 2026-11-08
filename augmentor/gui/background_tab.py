@@ -75,7 +75,7 @@ class BackgroundTab(RunMixin, ttk.Frame):
         self._vars: dict[str, tk.Variable] = {}
         self._wheel_widgets: list[tk.Misc] = []
         self._worker: Optional[WorkerProcess] = None
-        self._job: dict = {}                       # 실행 중 작업 정보 (mode/out/stopping/error_shown/done)
+        self._job: dict = {}                       # 실행 중 작업 정보 (mode/out/stopping/error/done)
         self._results: Optional[ResultList] = None
         self._result_dir: Optional[Path] = None
         self._orig_index: dict = {}
@@ -262,10 +262,13 @@ class BackgroundTab(RunMixin, ttk.Frame):
         titles = ("원본 + bbox (클릭: 색 선택)", "마스크 오버레이 (빨강=core 주황=보호 초록=keep)",
                   "생성 결과", "차이")
         labels = []
+        self._titles = []
         for i, title in enumerate(titles):
             cell = ttk.Frame(grid)
             cell.grid(row=i // 2, column=i % 2, padx=3, pady=2, sticky="n")
-            ttk.Label(cell, text=title).pack()
+            tl = ttk.Label(cell, text=title)
+            tl.pack()
+            self._titles.append((tl, title))
             holder = tk.Frame(cell, width=_PREVIEW_SIZE[0], height=_PREVIEW_SIZE[1], bg=_PANEL_BG)
             holder.pack()
             holder.pack_propagate(False)
@@ -631,6 +634,7 @@ class BackgroundTab(RunMixin, ttk.Frame):
         self._results_mode = False
         for lbl in (self._result_lbl, self._diff_lbl):
             self._set_panel(lbl, None, _PLACEHOLDER)
+        self._set_diff_title("")
         self._detail_lbl.configure(text="")
         if was or self._cur_img is None:
             self.refresh_preview_now()
@@ -643,6 +647,10 @@ class BackgroundTab(RunMixin, ttk.Frame):
         photo = self._to_photoimage(bgr)
         lbl.configure(image=photo, text="")
         lbl.image = photo
+
+    def _set_diff_title(self, note: str) -> None:
+        tl, base = self._titles[3]
+        tl.configure(text=f"{base} {note}" if note else base)
 
     def _show_result(self) -> None:
         rl = self._results
@@ -658,7 +666,9 @@ class BackgroundTab(RunMixin, ttk.Frame):
         except Exception as ex:      # 파일 없음/손상: 패널에 사유만 표시
             for lbl in (self._orig_lbl, self._mask_lbl, self._result_lbl, self._diff_lbl):
                 self._set_panel(lbl, None, str(ex)[:80])
+            self._set_diff_title("")
             return
+        self._set_diff_title(p.diff_note)
         for lbl, img in ((self._orig_lbl, p.orig), (self._mask_lbl, p.overlay),
                          (self._result_lbl, p.result), (self._diff_lbl, p.diff)):
             self._set_panel(lbl, img)

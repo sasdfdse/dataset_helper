@@ -173,7 +173,8 @@ def test_nonzero_exit_without_error_event_shows_stderr(env):
     FakeWorker.exit_code, FakeWorker.stderr_last = 1, "Traceback: boom"
     tab._btns["run"].invoke()
     assert pump(tab, lambda: not tab.is_running())
-    assert shown["error"] == ["Traceback: boom"] and not btn_disabled(tab, "run")
+    assert len(shown["error"]) == 1 and "Traceback: boom" in shown["error"][0] \
+        and "종료 코드 1" in shown["error"][0] and not btn_disabled(tab, "run")
 
 
 @needs_display
@@ -347,3 +348,28 @@ def test_destroy_stops_running_worker(env):
     tab.destroy()
     assert FakeWorker.instances[0].stopped
     FakeWorker.hold.set()
+
+
+@needs_display
+def test_reset_failure_shows_error_and_aborts(env, monkeypatch):
+    tab, shown, (images, labels, out) = env
+    save_settings(BackgroundSwapSettings(images_dir=images, labels_dir=labels, output_dir=out, seed=99),
+                  out / "run_settings.json")
+
+    def boom(p):
+        raise PermissionError("denied")
+    monkeypatch.setattr("gui.background_tab.reset_output_dir", boom)
+    monkeypatch.setattr(tab, "_ask_mismatch", lambda diff: "overwrite")
+    tab._btns["run"].invoke()
+    assert len(shown["error"]) == 1 and "denied" in shown["error"][0]
+    assert not FakeWorker.instances and not tab.is_running()
+
+
+@needs_display
+def test_diff_panel_title_notes_jpeg_fallback(env):
+    tab, _, (images, labels, out) = env
+    (out / "generated" / "a_bgswap1_a1.png").unlink()
+    tab.load_results(out)
+    assert "JPEG" in tab._titles[3][0].cget("text")
+    tab._step(1)                                  # PNG가 있는 레코드
+    assert "JPEG" not in tab._titles[3][0].cget("text")

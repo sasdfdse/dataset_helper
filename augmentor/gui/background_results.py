@@ -46,6 +46,15 @@ class Panels:
     overlay: np.ndarray    # 마스크 오버레이
     result: np.ndarray     # 생성 결과
     diff: np.ndarray       # 차이 (보호 영역 변경은 빨강)
+    diff_note: str = ""    # 비어 있지 않으면 차이 패널 제목에 덧붙일 주의 문구
+
+
+DIFF_JPEG_NOTE = "(JPEG 기준 — 압축 오차 포함)"
+
+
+def generated_png_path(result_dir: Path, entry: "ResultEntry") -> Path:
+    """무손실 생성 결과 (accepted/rejected 공통, 시도 번호 포함)."""
+    return Path(result_dir) / "generated" / f"{entry.stem}_bgswap{entry.variant}_a{entry.attempt}.png"
 
 
 def result_image_path(result_dir: Path, record: dict) -> Path:
@@ -97,16 +106,22 @@ def load_panels(result_dir: Path, entry: ResultEntry, item: ImageItem) -> Panels
     masks_dir = Path(result_dir) / "masks"
     m = {name: _fit(read_mask(masks_dir / f"{entry.stem}_{name}.png"), shape)
          for name in ("object_core", "object_protect", "keep")}
-    if result.shape[:2] != shape:
-        result_fit = cv2.resize(result, (shape[1], shape[0]), interpolation=cv2.INTER_AREA)
+    # 차이 패널은 무손실 PNG 기준 (JPEG 압축 오차가 보호 영역에 빨강으로 나오는 것을 방지).
+    # PNG가 없으면 JPEG로 대체하고 그 사실을 알린다.
+    lossless = load_image_bgr(generated_png_path(result_dir, entry))
+    note = ""
+    if lossless is None:
+        lossless, note = result, DIFF_JPEG_NOTE
+    if lossless.shape[:2] != shape:
+        result_fit = cv2.resize(lossless, (shape[1], shape[0]), interpolation=cv2.INTER_AREA)
     else:
-        result_fit = result
+        result_fit = lossless
     protect = m["object_protect"] | m["keep"]
     return Panels(
         orig=draw_boxes(orig, read_labels(item.label_path)),
         overlay=mask_overlay(orig, m["object_core"], m["object_protect"], m["keep"]),
         result=result,
-        diff=diff_image(orig, result_fit, protect))
+        diff=diff_image(orig, result_fit, protect), diff_note=note)
 
 
 # ── 문구 ──────────────────────────────────────────────────────────
