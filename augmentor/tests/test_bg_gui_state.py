@@ -32,6 +32,7 @@ def test_save_ui_state_swallows_errors(tmp_path):
 def test_parse_axis_values():
     assert parse_axis_values(" gym ; hall\n\n arena ;") == ["gym", "hall", "arena"]
     assert format_axis_values(["gym", "hall"]) == "gym; hall"
+    assert format_axis_values([1, 2]) == "1; 2"
 
 
 def test_quick_mask_preview_shape_and_colors():
@@ -180,7 +181,8 @@ def test_keep_item_dialog_validation_and_result(tmp_path, monkeypatch):
         pytest.skip("cannot open display")
     root.withdraw()
     try:
-        from gui.background_tab import BackgroundTab, KeepItemDialog
+        from gui.background_tab import BackgroundTab
+        from gui.keep_item_dialog import KeepItemDialog
         tab = BackgroundTab(root)
         dlg = KeepItemDialog(tab, None, ["dup"])
         dlg._ok()                                   # 이름 없음
@@ -197,5 +199,38 @@ def test_keep_item_dialog_validation_and_result(tmp_path, monkeypatch):
         dlg2._prompt.set("blue banner"); dlg2._ok()
         assert dlg2.result == KeepItem(name="t", method="text", prompt="blue banner")
         tab.destroy()
+    finally:
+        root.destroy()
+
+
+@needs_display
+def test_tab_survives_bad_typed_ui_state(tmp_path, monkeypatch):
+    import json
+    import tkinter as tk
+    from background_swap.settings import DEFAULT_SCENE_AXES
+    state = tmp_path / "ui_state.json"
+    state.write_text(json.dumps({"scene_axes": {"venue": [1, 2]}, "keep_items": [{"name": "x", "method": "color"}],
+                                 "num_variants": "many"}))
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("cannot open display")
+    root.withdraw()
+    try:
+        from gui.background_tab import BackgroundTab
+        # 1) 타입이 틀린 값이 들어 있는 파일: 예외 없이 생성, 값은 문자열로 강제 변환
+        tab = BackgroundTab(root, state_path=state)
+        tab.update()
+        assert tab.build_settings().scene_axes == {"venue": ["1", "2"]}
+        tab.destroy()
+        # 2) apply_settings 자체가 실패하는 경우: 기본값으로 폴백하고 파일을 정상 상태로 덮어씀
+        monkeypatch.setattr("gui.background_tab.load_ui_state",
+                            lambda p: BackgroundSwapSettings(scene_axes={"venue": None}))
+        tab = BackgroundTab(root, state_path=state)
+        tab.update()
+        assert tab.build_settings().scene_axes == DEFAULT_SCENE_AXES
+        assert "기본값" in tab._status_lbl.cget("text")
+        tab.destroy()
+        assert load_ui_state(state).scene_axes == DEFAULT_SCENE_AXES
     finally:
         root.destroy()

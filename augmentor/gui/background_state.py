@@ -1,6 +1,7 @@
 """Background Swap 탭의 UI 상태 저장/복원과 즉시 미리보기 (Tk/torch 의존 없음)."""
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
@@ -32,13 +33,24 @@ def save_ui_state(s: BackgroundSwapSettings, path: Path = UI_STATE_PATH) -> None
         pass
 
 
+def to_number(text, cast):
+    """안전한 숫자 변환 (cast는 int 또는 float). 실패하면 None, 예외 없음."""
+    try:
+        v = float(str(text).strip())
+        if not math.isfinite(v):
+            return None
+        return int(v) if cast is int else v
+    except (ValueError, OverflowError):
+        return None
+
+
 def parse_axis_values(text: str) -> list[str]:
     """`;` 또는 줄바꿈으로 구분된 값 → 공백 제거, 빈 값 제외."""
     return [p.strip() for p in re.split(r"[;\n]", text) if p.strip()]
 
 
 def format_axis_values(values: list[str]) -> str:
-    return "; ".join(values)
+    return "; ".join(str(v) for v in values)
 
 
 def quick_mask_preview(img_bgr: np.ndarray, boxes: list[BBox],
