@@ -327,6 +327,15 @@ class HFValidator(_Closable):
 
 # ── 팩토리 ─────────────────────────────────────────────────────────
 
+def _load(cls: Callable[..., T], *args) -> T:
+    """모델 로드도 OOM 재시도 대상 (다른 앱이 VRAM을 쥐고 있으면 로드가 가장 흔한 OOM 지점).
+
+    첫 시도에서 반쯤 올라간 가중치는 생성 중이던 객체와 함께 참조가 끊기므로,
+    oom_retry가 except 블록 밖에서 gc.collect()/empty_cache()를 호출할 때 해제된 뒤 재시도한다.
+    """
+    return oom_retry(lambda: cls(*args))
+
+
 class HFModelFactory:
     """ModelFactory 구현. 각 컨텍스트는 진입 시 로드, 종료 시(예외 포함) 해제."""
 
@@ -342,8 +351,8 @@ class HFModelFactory:
     def mask_models(self) -> Iterator[tuple[Segmenter, TextDetector]]:
         seg = det = None
         try:
-            seg = HFSegmenter(self.ids.segmenter)
-            det = HFTextDetector(self.ids.detector)
+            seg = _load(HFSegmenter, self.ids.segmenter)
+            det = _load(HFTextDetector, self.ids.detector)
             yield seg, det
         finally:
             release(seg, det)
@@ -353,7 +362,7 @@ class HFModelFactory:
     def prompt_model(self) -> Iterator[HFPromptGenerator]:
         gen = None
         try:
-            gen = HFPromptGenerator(self.ids.llm, self.class_names)
+            gen = _load(HFPromptGenerator, self.ids.llm, self.class_names)
             yield gen
         finally:
             release(gen)
@@ -363,7 +372,7 @@ class HFModelFactory:
     def inpainter(self) -> Iterator[HFInpainter]:
         inp = None
         try:
-            inp = HFInpainter(self.ids.inpainter)
+            inp = _load(HFInpainter, self.ids.inpainter)
             yield inp
         finally:
             release(inp)
@@ -373,7 +382,7 @@ class HFModelFactory:
     def detector(self) -> Iterator[HFTextDetector]:
         det = None
         try:
-            det = HFTextDetector(self.ids.detector)
+            det = _load(HFTextDetector, self.ids.detector)
             yield det
         finally:
             release(det)
@@ -383,7 +392,7 @@ class HFModelFactory:
     def validator(self) -> Iterator[HFValidator]:
         val = None
         try:
-            val = HFValidator(self.ids.vlm)
+            val = _load(HFValidator, self.ids.vlm)
             yield val
         finally:
             release(val)
