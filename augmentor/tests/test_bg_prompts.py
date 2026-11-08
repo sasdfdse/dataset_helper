@@ -4,6 +4,8 @@ from background_swap.prompts import (
     TemplatePromptGenerator,
     build_llm_messages,
     derive_seed,
+    finalize_prompt,
+    looks_like_keyword_list,
     negative_prompt,
     sample_scene,
     sanitize_prompt,
@@ -66,7 +68,7 @@ def test_llm_messages_include_forbidden_words():
     msgs = build_llm_messages(PromptRequest({"venue": "gym"}, ["mat"], 0), ["robot"])
     assert msgs[0]["role"] == "system" and "robot" in msgs[1]["content"] and "gym" in msgs[1]["content"]
     assert msgs[1]["role"] == "user"
-    assert "venue: gym" in msgs[1]["content"]
+    assert "Scene elements: gym" in msgs[1]["content"]
     assert "Keep elements: mat" in msgs[1]["content"]
     assert "Forbidden words: robot" in msgs[1]["content"]
     assert msgs[0]["content"] == LLM_SYSTEM_PROMPT
@@ -76,3 +78,109 @@ def test_llm_messages_none_placeholders():
     msgs = build_llm_messages(PromptRequest({"venue": "gym"}, [], 0), [])
     assert "Keep elements: none" in msgs[1]["content"]
     assert "Forbidden words: none" in msgs[1]["content"]
+
+
+AXES = ["venue", "lighting", "surroundings_floor"]
+
+
+def test_derive_seed_pinned_value():
+    assert derive_seed(0, "a", 1, 1) == 1427502002
+
+
+def test_llm_messages_do_not_expose_axis_keys():
+    scene = {"venue": "school gymnasium", "lighting": "warm LED lighting",
+             "surroundings_floor": "grey carpet", "style": "clean DSLR photo"}
+    user = build_llm_messages(PromptRequest(scene, ["mat"], 0), ["robot"])[1]["content"]
+    for key in scene:
+        assert f"{key}:" not in user and key not in user.replace(scene["lighting"], "")
+    assert "_" not in user.replace("\n", " ")
+    assert ("Scene elements: school gymnasium; warm LED lighting; grey carpet; "
+            "clean DSLR photo") in user
+
+
+def test_llm_messages_skip_empty_scene_values():
+    user = build_llm_messages(PromptRequest({"a": "gym", "b": " ", "c": ""}, [], 0), [])[1]["content"]
+    assert "Scene elements: gym\n" in user
+
+
+def test_system_prompt_demands_natural_sentence_with_example():
+    low = LLM_SYSTEM_PROMPT.lower()
+    assert "single natural english sentence" in low and "example" in low
+    assert "no labels" in low and "underscores" in low and "colons" in low
+
+
+def test_looks_like_keyword_list_positives():
+    assert looks_like_keyword_list("Surroundings_floor: grey carpet", AXES)
+    assert looks_like_keyword_list("venue, lighting", AXES)
+    assert looks_like_keyword_list("Surroundings floor grey carpet", AXES)
+    assert looks_like_keyword_list("gym_hall_clean_photo", [])
+    assert looks_like_keyword_list("gym: grey carpet", [])
+
+
+def test_looks_like_keyword_list_negative_for_natural_sentence():
+    text = "A spacious school gymnasium with grey carpet and sponsor banners on the walls."
+    assert not looks_like_keyword_list(text, AXES)
+    assert not looks_like_keyword_list(text, [""])
+    # 한 단어 축 이름이 자연스러운 문장 속에 쓰인 것만으로는 키워드 나열이 아니다.
+    assert not looks_like_keyword_list(
+        "A school gymnasium venue lit by warm LED lighting, with grey carpet.", AXES)
+
+
+def test_finalize_prompt_passes_good_sentence_through():
+    req = PromptRequest({"venue": "gym"}, ["mat"], 0)
+    good = "A spacious school gymnasium with grey carpet and sponsor banners on the walls."
+    assert finalize_prompt(good, req, ["robot"], AXES) == good
+
+
+def test_finalize_prompt_falls_back_on_keyword_output():
+    req = PromptRequest({"venue": "sports hall", "lighting": "warm LED"}, ["fence"], 0)
+    out = finalize_prompt("Surroundings_floor_grey_carpet_clean_DSLR_photo", req, ["robot"], AXES)
+    assert out == "sports hall, warm LED, surrounding fence, photorealistic"
+
+
+def test_finalize_prompt_falls_back_on_empty_output():
+    req = PromptRequest({"venue": "sports hall"}, [], 0)
+    assert finalize_prompt("", req, ["robot"], AXES) == "sports hall, photorealistic"
+    assert finalize_prompt('"robot"', req, ["robot"], AXES) == "sports hall, photorealistic"
+
+
+def test_finalize_prompt_fallback_is_sanitized():
+    req = PromptRequest({"venue": "robot arena"}, [], 0)
+    assert finalize_prompt("venue: x", req, ["robot"], AXES) == "arena, photorealistic"
+
+
+def test_sanitize_removes_longest_class_name_first():
+    out = sanitize_prompt("a ball boy near the ball", ["ball", "ball boy"])
+    assert out == "a near the"
+
+
+def test_sanitize_multi_word_class_across_whitespace():
+    out = sanitize_prompt("a gym with a ball  \t boy here", ["ball boy"])
+    assert out == "a gym with a here"
+
+
+def test_sanitize_keeps_mismatched_quotes():
+    assert sanitize_prompt('"hello world', []) == '"hello world'
+    assert sanitize_prompt("hello world'", []) == "hello world'"
+    assert sanitize_prompt("“hello” and “world”", []) == "hello” and “world"
+
+
+def test_sanitize_strips_nested_matching_quotes():
+    assert sanitize_prompt("\"'hello world'\"", []) == "hello world"
+    assert sanitize_prompt("‘hello world’", []) == "hello world"
+
+
+def test_sanitize_strips_trailing_comma_after_truncation():
+    text = " ".join(["w"] * 59) + ", tail words"
+    out = sanitize_prompt(text, [])
+    assert len(out.split()) == 60 and not out.endswith(",")
+
+
+def test_negative_prompt_skips_empty_names():
+    assert negative_prompt(["robot", "", "  "]) == "robot, blurry, distorted, text, watermark, extra objects"
+
+
+def test_template_prompt_skips_empty_values():
+    req = PromptRequest({"a": "", "venue": "gym", "b": "  "}, [], 0)
+    assert TemplatePromptGenerator().generate_batch([req]) == ["gym, photorealistic"]
+    assert TemplatePromptGenerator().generate_batch([PromptRequest({"a": ""}, [], 0)]) == ["photorealistic"]

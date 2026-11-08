@@ -14,12 +14,17 @@ _QUOTE_CHARS = "\"'“”‘’"
 
 LLM_SYSTEM_PROMPT = (
     "You write background descriptions for an SDXL inpainting model. "
-    "Output exactly one sentence of at most 60 words describing only the indoor "
+    "Write a single natural English sentence of at most 60 words describing only the indoor "
     "competition venue background. "
+    "It must be a fluent sentence, not a list: no labels, no underscores, no colons, "
+    "no keyword lists. "
     "Do not mention people, robots, balls, animals, vehicles or any other countable objects. "
     "Never use any forbidden word that the user provides. "
     "Mention the keep elements only as context, in the form \"surrounding ...\". "
-    "Output the sentence only, with no quotes and no preamble."
+    "Output the sentence only, with no quotes and no preamble.\n"
+    "Example of the desired style: A spacious indoor exhibition hall with a polished concrete "
+    "floor, bright overhead LED lighting and colorful sponsor banners hanging along the walls, "
+    "captured as a clean DSLR photo."
 )
 
 
@@ -52,39 +57,84 @@ class TemplatePromptGenerator:
 
     @staticmethod
     def _one(req: PromptRequest) -> str:
-        parts = ", ".join(req.scene.values())
+        parts = [v.strip() for v in req.scene.values() if v and v.strip()]
         if req.keep_names:
-            parts += ", surrounding " + " and ".join(req.keep_names)
-        return parts + ", photorealistic"
+            parts.append("surrounding " + " and ".join(req.keep_names))
+        parts.append("photorealistic")
+        return ", ".join(parts)
 
 
 def negative_prompt(class_names: list[str]) -> str:
-    return ", ".join(list(class_names) + QUALITY_NEGATIVES)
+    names = [n.strip() for n in class_names if n and n.strip()]
+    return ", ".join(names + QUALITY_NEGATIVES)
+
+
+_QUOTE_PAIRS = {'"': '"', "'": "'", "“": "”", "‘": "’"}
+
+
+def _strip_matching_quotes(text: str) -> str:
+    text = text.strip()
+    while len(text) >= 2 and _QUOTE_PAIRS.get(text[0]) == text[-1]:
+        text = text[1:-1].strip()
+    return text
 
 
 def sanitize_prompt(text: str, class_names: list[str]) -> str:
     lines = [ln for ln in text.splitlines() if ln.strip()]
-    out = lines[0] if lines else ""
-    out = out.strip().strip(_QUOTE_CHARS + " \t").strip()
-    for name in class_names:
-        name = name.strip()
-        if not name:
-            continue
+    out = _strip_matching_quotes(lines[0]) if lines else ""
+    names = sorted({n.strip() for n in class_names if n and n.strip()}, key=len, reverse=True)
+    for name in names:
         # \b와 같지만 "c++"처럼 비단어 문자로 끝나는 이름도 다룬다.
-        out = re.sub(rf"(?<!\w){re.escape(name)}(?!\w)", "", out, flags=re.IGNORECASE)
+        body = r"\s+".join(re.escape(tok) for tok in name.split())
+        out = re.sub(rf"(?<!\w){body}(?!\w)", "", out, flags=re.IGNORECASE)
     out = re.sub(r"\s+", " ", out)
     out = re.sub(r"\s+([,.])", r"\1", out)
     out = re.sub(r",(?:\s*,)+", ",", out)
     out = out.strip(", ")
     words = out.split()
-    return " ".join(words[:MAX_PROMPT_WORDS])
+    return " ".join(words[:MAX_PROMPT_WORDS]).rstrip(", ")
+
+
+def looks_like_keyword_list(text: str, axis_names: list[str]) -> bool:
+    """축 이름/밑줄/콜론이 새어 나온 키워드형 출력인지 판별한다 (단순 휴리스틱).
+
+    밑줄/콜론이 있거나, 여러 단어 축 이름("surroundings_floor")이 어디서든 보이거나,
+    한 단어 축 이름("lighting")이 쉼표로 구분된 항목 단독으로 나타나면 True.
+    한 단어 축 이름은 자연스러운 문장("warm LED lighting")에도 흔히 쓰이므로
+    문장 속 단순 등장만으로는 판정하지 않는다.
+    """
+    if "_" in text or ":" in text:
+        return True
+    low = text.lower()
+    parts = {p.strip(" .") for p in low.split(",")}
+    for axis in axis_names:
+        name = axis.strip().lower().replace("_", " ")
+        if not name:
+            continue
+        if " " in name:
+            if re.search(rf"(?<![a-z]){re.escape(name)}(?![a-z])", low):
+                return True
+        elif name in parts:
+            return True
+    return False
+
+
+def finalize_prompt(raw: str, req: PromptRequest, class_names: list[str],
+                    axis_names: list[str]) -> str:
+    """LLM 출력을 정리하고, 비었거나 키워드 나열이면 템플릿 프롬프트로 대체한다."""
+    out = sanitize_prompt(raw, class_names)
+    if not out or looks_like_keyword_list(out, axis_names):
+        out = sanitize_prompt(TemplatePromptGenerator._one(req), class_names)
+    return out
 
 
 def build_llm_messages(req: PromptRequest, class_names: list[str]) -> list[dict[str, str]]:
-    scene_lines = "\n".join(f"{axis}: {value}" for axis, value in req.scene.items())
+    values = [v.strip() for v in req.scene.values() if v and v.strip()]
+    elements = "; ".join(values) if values else "none"
     keep = ", ".join(req.keep_names) if req.keep_names else "none"
     forbidden = ", ".join(class_names) if class_names else "none"
-    user = f"{scene_lines}\nKeep elements: {keep}\nForbidden words: {forbidden}"
+    user = (f"Scene elements: {elements}\nKeep elements: {keep}\n"
+            f"Forbidden words: {forbidden}")
     return [
         {"role": "system", "content": LLM_SYSTEM_PROMPT},
         {"role": "user", "content": user},

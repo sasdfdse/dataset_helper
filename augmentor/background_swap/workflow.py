@@ -34,7 +34,7 @@ from .masks import Segmenter, TextDetector, bbox_to_xyxy, build_mask_set
 from .progress import Progress
 from .report import class_recall, merge_recall, write_report
 from .prompts import (PromptGenerator, PromptRequest, TemplatePromptGenerator, derive_seed,
-                      negative_prompt, sample_scene, sanitize_prompt)
+                      finalize_prompt, negative_prompt, sample_scene)
 from .settings import BackgroundSwapSettings
 from .store import (append_jsonl, atomic_write_bytes, atomic_write_text, imwrite_atomic,
                     read_jsonl, read_mask, write_mask)
@@ -347,12 +347,14 @@ class BackgroundSwapWorkflow:
         neg = negative_prompt(self.class_names)
         for i in range(0, len(todo), PROMPT_BATCH):
             batch = todo[i:i + PROMPT_BATCH]
-            raws = _check_count("prompts", "generate_batch", len(batch), gen.generate_batch(
-                [PromptRequest(scene=dict(scene), keep_names=list(keep_names), seed=seed)
-                 for _, _, seed, scene in batch]))
-            for (stem, n, seed, scene), raw in zip(batch, raws, strict=True):
+            reqs = [PromptRequest(scene=dict(scene), keep_names=list(keep_names), seed=seed)
+                    for _, _, seed, scene in batch]
+            raws = _check_count("prompts", "generate_batch", len(batch), gen.generate_batch(reqs))
+            for (stem, n, seed, scene), req, raw in zip(batch, reqs, raws, strict=True):
                 job = Job(stem=stem, variant=n, attempt=k, seed=seed, scene=dict(scene),
-                          prompt=sanitize_prompt(raw, self.class_names), negative_prompt=neg)
+                          prompt=finalize_prompt(raw, req, self.class_names,
+                                                 list(self.settings.scene_axes)),
+                          negative_prompt=neg)
                 append_jsonl(self.jobs_path, job.to_dict())
                 existing[_key(stem, n, k)] = job
                 self.progress.advance()
