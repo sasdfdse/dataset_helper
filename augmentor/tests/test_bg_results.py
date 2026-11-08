@@ -137,6 +137,10 @@ def test_format_report_and_load_report(tmp_path):
     for needle in ("accepted", "protected_changed", "venue", "gym", "ball", "50.0%", "n/a",
                    "GDINO 미검출은 새 객체가 없다는 뜻이 아닙니다.", "masks"):
         assert needle in text
+    assert "평균 생성 시간" not in text
+    assert "평균 생성 시간" not in format_report({**report, "avg_seconds_per_generation": None})
+    text = format_report({**report, "avg_seconds_per_generation": 2.5})
+    assert "[이미지당 평균 생성 시간]" in text and "2.50초" in text
     assert format_report({})        # 빈 리포트도 예외 없음
     assert load_report(tmp_path) is None
     (tmp_path / "report.json").write_text(json.dumps(report))

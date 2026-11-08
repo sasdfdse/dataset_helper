@@ -73,6 +73,21 @@ def test_build_report_recall_and_timings(tmp_path):
     assert rep["status_counts"] == {} and rep["reason_counts"] == {}
 
 
+def test_build_report_avg_seconds_per_generation(tmp_path):
+    for r in [_rec("accepted"), _rec("rejected"), _rec("rejected"), _rec("skipped"),
+              {**_rec("exhausted"), "attempt": None}]:
+        append_jsonl(tmp_path / "Manifest.jsonl", r)
+    assert build_report(tmp_path)["avg_seconds_per_generation"] is None   # timings 없음
+    (tmp_path / "timings.json").write_text(json.dumps({"masks": 9.0, "inpaint": 6.0}))
+    assert build_report(tmp_path)["avg_seconds_per_generation"] == 2.0     # 6.0 / 3 시도
+
+
+def test_build_report_avg_seconds_none_without_attempts(tmp_path):
+    append_jsonl(tmp_path / "Manifest.jsonl", _rec("skipped"))
+    (tmp_path / "timings.json").write_text(json.dumps({"inpaint": 6.0}))
+    assert build_report(tmp_path)["avg_seconds_per_generation"] is None
+
+
 def test_write_report_writes_json(tmp_path):
     rep = write_report(tmp_path)
     assert json.loads((tmp_path / "report.json").read_text(encoding="utf-8")) == rep

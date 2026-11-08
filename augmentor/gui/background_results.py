@@ -203,6 +203,9 @@ def format_report(report: dict) -> str:
         lines += [f"  {k}: {v:.1f}" if isinstance(v, (int, float)) else f"  {k}: {v}"
                   for k, v in secs.items()]
         lines.append("")
+    avg = report.get("avg_seconds_per_generation")
+    if isinstance(avg, (int, float)) and not isinstance(avg, bool):
+        lines += ["[이미지당 평균 생성 시간]", f"  {avg:.2f}초 (인페인팅 시간 / 생성 시도 수)", ""]
     if report.get("note"):
         lines.append(f"※ {report['note']}")
     return "\n".join(lines).strip() or "리포트가 비어 있습니다."

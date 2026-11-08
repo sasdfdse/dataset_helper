@@ -44,6 +44,14 @@ def _scene_counts(records: list[dict]) -> dict[str, dict[str, int]]:
     return {axis: dict(c) for axis, c in axes.items()}
 
 
+def _avg_generation_seconds(stage_seconds, attempts: int) -> float | None:
+    """인페인팅 단계 누적 시간 / 생성 시도 수(accepted+rejected 레코드). 계산 불가면 None."""
+    inpaint = stage_seconds.get("inpaint") if isinstance(stage_seconds, dict) else None
+    if not attempts or not isinstance(inpaint, (int, float)):
+        return None
+    return round(inpaint / attempts, 3)
+
+
 def build_report(output_dir: Path) -> dict:
     output_dir = Path(output_dir)
     records = read_jsonl(output_dir / "Manifest.jsonl")
@@ -72,6 +80,8 @@ def build_report(output_dir: Path) -> dict:
     timings_path = output_dir / "timings.json"
     if timings_path.exists():
         report["stage_seconds"] = json.loads(timings_path.read_text(encoding="utf-8"))
+    report["avg_seconds_per_generation"] = _avg_generation_seconds(
+        report.get("stage_seconds"), status_counts[ACCEPTED] + status_counts[REJECTED])
     report["note"] = NOTE
     return report
 

@@ -82,11 +82,14 @@ def sanitize_prompt(text: str, class_names: list[str]) -> str:
     lines = [ln for ln in text.splitlines() if ln.strip()]
     out = _strip_matching_quotes(lines[0]) if lines else ""
     names = sorted({n.strip() for n in class_names if n and n.strip()}, key=len, reverse=True)
+    # 단어 사이 공백은 아무 공백 한 칸 이상으로 맞춘다. (f-string 식 안에 백슬래시를 쓰지 않음:
+    # Python 3.12 미만 호환)
+    ws = r"\s+"
+    bodies = [ws.join(re.escape(t) for t in name.split()) for name in names]
     patterns = [
         # \b와 같지만 "c++"처럼 비단어 문자로 끝나는 이름도 다룬다.
-        re.compile(rf"(?<!\w){r'\s+'.join(re.escape(t) for t in name.split())}(?!\w)",
-                   re.IGNORECASE)
-        for name in names
+        re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
+        for body in bodies
     ]
     # 제거 때문에 새로 붙은 단어가 다른 이름을 만들 수 있으므로 변화가 없을 때까지 반복한다.
     for _ in range(MAX_SANITIZE_PASSES):
