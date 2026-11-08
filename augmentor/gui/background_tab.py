@@ -13,11 +13,11 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk
 
-from background_swap.classes import find_class_names_file
-from background_swap.composite import draw_boxes
-from background_swap.inputs import collect_items, load_image_bgr
-from background_swap.settings import BackgroundSwapSettings, KeepItem, ModelIds
-from background_swap.store import reset_output_dir
+from background_swap.dataset.classes import find_class_names_file
+from background_swap.stages.composite import draw_boxes
+from background_swap.dataset.inputs import collect_items, load_image_bgr
+from background_swap.common.settings import BackgroundSwapSettings, KeepItem, ModelIds
+from background_swap.common.store import reset_output_dir
 from core.label import read_labels
 from gui import background_state
 from gui.augment_tab import _PREVIEW_SIZE

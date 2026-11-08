@@ -11,7 +11,7 @@ from typing import Protocol
 
 import numpy as np
 
-from background_swap.domain import Detection, ValidationResult
+from background_swap.common.domain import Detection, ValidationResult
 
 VLM_PROMPT = (
     "You are checking a synthetic image whose background was replaced by an image generator. "

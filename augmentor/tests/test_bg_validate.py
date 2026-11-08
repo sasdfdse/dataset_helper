@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from background_swap.domain import Detection
-from background_swap.validate import (
+from background_swap.common.domain import Detection
+from background_swap.stages.validate import (
     VLM_PROMPT,
     combine,
     find_new_objects,

@@ -4,13 +4,13 @@ import cv2
 import numpy as np
 import pytest
 
-from background_swap.composite import draw_boxes
-from background_swap.domain import Detection
-from background_swap.progress import NullProgress
-from background_swap.prompts import PromptRequest, TemplatePromptGenerator, sanitize_prompt
-from background_swap.settings import KeepItem
-from background_swap.store import read_jsonl
-from background_swap.workflow import BackgroundSwapWorkflow, run_preview
+from background_swap.stages.composite import draw_boxes
+from background_swap.common.domain import Detection
+from background_swap.common.progress import NullProgress
+from background_swap.stages.prompts import PromptRequest, TemplatePromptGenerator, sanitize_prompt
+from background_swap.common.settings import KeepItem
+from background_swap.common.store import read_jsonl
+from background_swap.pipeline.workflow import BackgroundSwapWorkflow, run_preview
 from core.label import BBox
 from tests.bg_fakes import *  # noqa: F401,F403
 

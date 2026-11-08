@@ -8,9 +8,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from background_swap.domain import Detection
-from background_swap.prompts import TemplatePromptGenerator
-from background_swap.settings import BackgroundSwapSettings
+from background_swap.common.domain import Detection
+from background_swap.stages.prompts import TemplatePromptGenerator
+from background_swap.common.settings import BackgroundSwapSettings
 
 GREEN_BGR = (40, 160, 40)
 GREEN_HSV_RANGE = ([35, 40, 40], [85, 255, 255])

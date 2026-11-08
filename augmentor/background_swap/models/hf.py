@@ -24,10 +24,10 @@ from transformers import (AutoModelForCausalLM, AutoModelForZeroShotObjectDetect
                           AutoProcessor, AutoTokenizer, BitsAndBytesConfig,
                           Qwen2_5_VLForConditionalGeneration, Sam2Model, Sam2Processor)
 
-from .domain import Detection, GpuOutOfMemory
-from .masks import Segmenter, TextDetector
-from .prompts import PromptRequest, build_llm_messages
-from .settings import BackgroundSwapSettings
+from background_swap.common.domain import Detection, GpuOutOfMemory
+from background_swap.common.settings import BackgroundSwapSettings
+from background_swap.stages.masks import Segmenter, TextDetector
+from background_swap.stages.prompts import PromptRequest, build_llm_messages
 
 T = TypeVar("T")
 

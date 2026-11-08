@@ -7,10 +7,10 @@ from pathlib import Path
 
 import numpy as np
 
-from background_swap.color_region import color_mask
-from background_swap.composite import mask_overlay
-from background_swap.masks import object_core_mask, object_protect_mask
-from background_swap.settings import (BackgroundSwapSettings, load_settings,
+from background_swap.stages.color_region import color_mask
+from background_swap.stages.composite import mask_overlay
+from background_swap.stages.masks import object_core_mask, object_protect_mask
+from background_swap.common.settings import (BackgroundSwapSettings, load_settings,
                                       save_settings)
 from core.label import BBox
 

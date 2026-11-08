@@ -11,9 +11,9 @@ import time
 
 import pytest
 
-from background_swap.progress import NullProgress
-from background_swap.store import read_jsonl
-from background_swap.workflow import BackgroundSwapWorkflow
+from background_swap.common.progress import NullProgress
+from background_swap.common.store import read_jsonl
+from background_swap.pipeline.workflow import BackgroundSwapWorkflow
 from tests.bg_fakes import make_settings
 
 pytestmark = pytest.mark.gpu

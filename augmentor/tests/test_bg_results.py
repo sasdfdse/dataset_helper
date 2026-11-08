@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 import pytest
 
-from background_swap.composite import diff_image
-from background_swap.store import imwrite_atomic, write_mask
+from background_swap.stages.composite import diff_image
+from background_swap.common.store import imwrite_atomic, write_mask
 from gui.background_results import (DIFF_JPEG_NOTE, build_result_list, describe_record, format_export_message,
                                     format_report, index_originals, load_panels, load_report,
                                     result_image_path)
@@ -152,7 +152,7 @@ def test_format_export_message():
 
 
 def _protect(out):
-    from background_swap.store import read_mask
+    from background_swap.common.store import read_mask
     return read_mask(out / "masks" / "a_object_protect.png") | read_mask(out / "masks" / "a_keep.png")
 
 

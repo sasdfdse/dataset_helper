@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .inputs import looks_non_train
+from background_swap.dataset.inputs import looks_non_train
 
 
 class NonTrainTargetError(ValueError):

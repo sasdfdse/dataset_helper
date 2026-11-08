@@ -6,9 +6,9 @@ from typing import Protocol
 import cv2
 import numpy as np
 
-from .composite import composite
-from .domain import Job, MaskSet
-from .settings import BackgroundSwapSettings
+from background_swap.stages.composite import composite
+from background_swap.common.domain import Job, MaskSet
+from background_swap.common.settings import BackgroundSwapSettings
 
 
 class Inpainter(Protocol):

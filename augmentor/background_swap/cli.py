@@ -14,14 +14,14 @@ import traceback
 from pathlib import Path
 from typing import Callable, TextIO
 
-from background_swap.classes import find_class_names_file, load_class_names
-from background_swap.domain import GpuOutOfMemory
-from background_swap.export import NonTrainTargetError, export_accepted
-from background_swap.inputs import looks_non_train
-from background_swap.progress import JsonLinesProgress
-from background_swap.settings import (BackgroundSwapSettings, generation_diff, load_settings,
+from background_swap.dataset.classes import find_class_names_file, load_class_names
+from background_swap.common.domain import GpuOutOfMemory
+from background_swap.dataset.export import NonTrainTargetError, export_accepted
+from background_swap.dataset.inputs import looks_non_train
+from background_swap.common.progress import JsonLinesProgress
+from background_swap.common.settings import (BackgroundSwapSettings, generation_diff, load_settings,
                                       validate_settings)
-from background_swap.workflow import BackgroundSwapWorkflow, ModelFactory, run_preview
+from background_swap.pipeline.workflow import BackgroundSwapWorkflow, ModelFactory, run_preview
 
 EXIT_OK, EXIT_OTHER, EXIT_SETTINGS, EXIT_NON_TRAIN, EXIT_MISMATCH, EXIT_DEPS, EXIT_OOM = (
     0, 1, 2, 3, 4, 5, 6)

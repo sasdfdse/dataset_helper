@@ -12,9 +12,9 @@ import numpy as np
 
 from core.label import BBox
 
-from .color_region import color_mask
-from .domain import Detection, MaskSet
-from .settings import BackgroundSwapSettings, KeepItem
+from background_swap.stages.color_region import color_mask
+from background_swap.common.domain import Detection, MaskSet
+from background_swap.common.settings import BackgroundSwapSettings, KeepItem
 
 _RECT_MARGIN = 0.1
 _SAM_MIN_AREA_RATIO = 0.2

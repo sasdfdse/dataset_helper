@@ -5,9 +5,9 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from .domain import ACCEPTED, REJECTED, SKIPPED, Detection
-from .store import atomic_write_text, read_jsonl
-from .validate import iou
+from background_swap.common.domain import ACCEPTED, REJECTED, SKIPPED, Detection
+from background_swap.common.store import atomic_write_text, read_jsonl
+from background_swap.stages.validate import iou
 
 RECALL_IOU = 0.5
 NOTE = "GDINO 미검출은 새 객체가 없다는 뜻이 아닙니다."

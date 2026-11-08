@@ -1,4 +1,4 @@
-"""models.py의 GPU 없이 검증 가능한 부분: oom_retry, match_phrase, 팩토리 로드 OOM 처리.
+"""models/hf.py의 GPU 없이 검증 가능한 부분: oom_retry, match_phrase, 팩토리 로드 OOM 처리.
 
 torch/transformers/diffusers가 없는 환경(시스템 python3)에서는 건너뛴다. importorskip은 모듈
 최상단이 아니라 fixture 안에서 한다 — ROS launch_testing 플러그인이 있는 시스템 pytest 7에서는
@@ -9,8 +9,8 @@ import sys
 
 import pytest
 
-from background_swap.domain import GpuOutOfMemory
-from background_swap.settings import BackgroundSwapSettings
+from background_swap.common.domain import GpuOutOfMemory
+from background_swap.common.settings import BackgroundSwapSettings
 
 
 @pytest.fixture
@@ -20,8 +20,10 @@ def M(monkeypatch):
     pytest.importorskip("diffusers")
     # 다른 테스트(test_bg_cli)가 sys.modules["background_swap.models"]에 가짜 모듈을 넣고 남길 수
     # 있으므로 항목을 지우고 실제 모듈을 새로 import한다 (teardown에서 이전 상태로 복원됨).
+    # 구현/monkeypatch 대상은 background_swap.models.hf (팩토리가 그 모듈 전역에서 클래스를 조회).
     monkeypatch.delitem(sys.modules, "background_swap.models", raising=False)
-    return importlib.import_module("background_swap.models")
+    monkeypatch.delitem(sys.modules, "background_swap.models.hf", raising=False)
+    return importlib.import_module("background_swap.models.hf")
 
 
 def _oom(M):

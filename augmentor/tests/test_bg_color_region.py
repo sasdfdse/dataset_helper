@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from background_swap.color_region import color_mask, hsv_in_range, hsv_range_from_click
+from background_swap.stages.color_region import color_mask, hsv_in_range, hsv_range_from_click
 
 GREEN = (40, 160, 40)   # BGR
 

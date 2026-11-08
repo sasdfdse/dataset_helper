@@ -3,7 +3,7 @@ import os
 import numpy as np
 import pytest
 
-from background_swap.settings import BackgroundSwapSettings, KeepItem
+from background_swap.common.settings import BackgroundSwapSettings, KeepItem
 from core.label import BBox
 from gui.background_state import (format_axis_values, load_ui_state,
                                   parse_axis_values, quick_mask_preview,
@@ -207,7 +207,7 @@ def test_keep_item_dialog_validation_and_result(tmp_path, monkeypatch):
 def test_tab_survives_bad_typed_ui_state(tmp_path, monkeypatch):
     import json
     import tkinter as tk
-    from background_swap.settings import DEFAULT_SCENE_AXES
+    from background_swap.common.settings import DEFAULT_SCENE_AXES
     state = tmp_path / "ui_state.json"
     state.write_text(json.dumps({"scene_axes": {"venue": [1, 2]}, "keep_items": [{"name": "x", "method": "color"}],
                                  "num_variants": "many"}))

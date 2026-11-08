@@ -6,8 +6,8 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from background_swap.color_region import hsv_range_from_click
-from background_swap.settings import KeepItem
+from background_swap.stages.color_region import hsv_range_from_click
+from background_swap.common.settings import KeepItem
 from gui.background_state import to_number as _to_number
 
 _PANEL_BG = "#313244"

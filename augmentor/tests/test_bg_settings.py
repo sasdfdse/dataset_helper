@@ -1,4 +1,4 @@
-from background_swap.settings import (
+from background_swap.common.settings import (
     BackgroundSwapSettings, KeepItem, generation_diff, load_settings,
     save_settings, settings_from_dict, validate_settings,
 )

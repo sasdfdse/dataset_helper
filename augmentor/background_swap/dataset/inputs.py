@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from background_swap.domain import ImageItem
+from background_swap.common.domain import ImageItem
 from core.pipeline import _collect_originals
 
 NON_TRAIN_PARTS = {"val", "valid", "validation", "test"}

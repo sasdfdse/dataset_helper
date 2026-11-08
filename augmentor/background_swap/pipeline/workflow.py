@@ -25,20 +25,20 @@ import numpy as np
 
 from core.label import BBox, read_labels
 
-from .composite import draw_boxes
-from .domain import (ACCEPTED, EXHAUSTED, REJECTED, SKIPPED, Detection, ImageItem, Job,
+from background_swap.stages.composite import draw_boxes
+from background_swap.common.domain import (ACCEPTED, EXHAUSTED, REJECTED, SKIPPED, Detection, ImageItem, Job,
                      MaskSet)
-from .inpaint import Inpainter, run_inpaint
-from .inputs import collect_items, load_image_bgr
-from .masks import Segmenter, TextDetector, bbox_to_xyxy, build_mask_set
-from .progress import Progress
-from .report import class_recall, merge_recall, write_report
-from .prompts import (PromptGenerator, PromptRequest, TemplatePromptGenerator, derive_seed,
+from background_swap.stages.inpaint import Inpainter, run_inpaint
+from background_swap.dataset.inputs import collect_items, load_image_bgr
+from background_swap.stages.masks import Segmenter, TextDetector, bbox_to_xyxy, build_mask_set
+from background_swap.common.progress import Progress
+from background_swap.dataset.report import class_recall, merge_recall, write_report
+from background_swap.stages.prompts import (PromptGenerator, PromptRequest, TemplatePromptGenerator, derive_seed,
                       finalize_prompt, negative_prompt, sample_scene)
-from .settings import BackgroundSwapSettings
-from .store import (append_jsonl, atomic_write_bytes, atomic_write_text, imwrite_atomic,
+from background_swap.common.settings import BackgroundSwapSettings
+from background_swap.common.store import (append_jsonl, atomic_write_bytes, atomic_write_text, imwrite_atomic,
                     read_jsonl, read_mask, write_mask)
-from .validate import VLM_PROMPT, ImageValidator, combine, find_new_objects, rule_checks
+from background_swap.stages.validate import VLM_PROMPT, ImageValidator, combine, find_new_objects, rule_checks
 
 PROMPT_BATCH = 8
 VLM_BATCH = 4

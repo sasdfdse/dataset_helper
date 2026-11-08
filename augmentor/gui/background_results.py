@@ -10,10 +10,10 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from background_swap.composite import diff_image, draw_boxes, mask_overlay
-from background_swap.domain import ACCEPTED, EXHAUSTED, REJECTED, SKIPPED, ImageItem
-from background_swap.inputs import collect_items, load_image_bgr
-from background_swap.store import read_jsonl, read_mask
+from background_swap.stages.composite import diff_image, draw_boxes, mask_overlay
+from background_swap.common.domain import ACCEPTED, EXHAUSTED, REJECTED, SKIPPED, ImageItem
+from background_swap.dataset.inputs import collect_items, load_image_bgr
+from background_swap.common.store import read_jsonl, read_mask
 from core.label import read_labels
 
 _SUMMARY_ORDER = (ACCEPTED, REJECTED, SKIPPED, EXHAUSTED)

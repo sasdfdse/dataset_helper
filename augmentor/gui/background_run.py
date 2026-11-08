@@ -10,8 +10,8 @@ from typing import Callable, Optional
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
-from background_swap.inputs import looks_non_train
-from background_swap.settings import (BackgroundSwapSettings, generation_diff, load_settings,
+from background_swap.dataset.inputs import looks_non_train
+from background_swap.common.settings import (BackgroundSwapSettings, generation_diff, load_settings,
                                       save_settings, validate_settings)
 from gui.background_dialogs import ReportWindow, ask_choice
 from gui.background_results import format_export_message, format_report, load_report

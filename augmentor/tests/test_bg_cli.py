@@ -4,8 +4,8 @@ import json
 import sys
 
 from background_swap.cli import main
-from background_swap.domain import GpuOutOfMemory
-from background_swap.settings import BackgroundSwapSettings, save_settings
+from background_swap.common.domain import GpuOutOfMemory
+from background_swap.common.settings import BackgroundSwapSettings, save_settings
 from tests.bg_fakes import FakeFactory, FakeInpainter, make_settings
 
 _settings = make_settings

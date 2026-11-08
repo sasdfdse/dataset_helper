@@ -5,8 +5,8 @@ import cv2
 import numpy as np
 import pytest
 
-from background_swap.progress import JsonLinesProgress, NullProgress
-from background_swap.store import (
+from background_swap.common.progress import JsonLinesProgress, NullProgress
+from background_swap.common.store import (
     append_jsonl, atomic_write_bytes, atomic_write_text, imwrite_atomic,
     read_jsonl, read_mask, reset_output_dir, write_mask,
 )

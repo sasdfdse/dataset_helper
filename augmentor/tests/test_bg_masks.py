@@ -1,9 +1,9 @@
 import numpy as np
 
-from background_swap.masks import (bbox_to_xyxy, build_mask_set, keep_item_mask,
+from background_swap.stages.masks import (bbox_to_xyxy, build_mask_set, keep_item_mask,
                                    needs_sam, object_core_mask, object_protect_mask)
-from background_swap.domain import Detection
-from background_swap.settings import BackgroundSwapSettings, KeepItem
+from background_swap.common.domain import Detection
+from background_swap.common.settings import BackgroundSwapSettings, KeepItem
 from core.label import BBox
 from tests.bg_fakes import (GREEN_HSV_RANGE, FakeDetector, FakeSegmenter,
                             field_image)

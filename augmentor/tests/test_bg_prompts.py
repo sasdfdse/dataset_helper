@@ -1,4 +1,4 @@
-from background_swap.prompts import (
+from background_swap.stages.prompts import (
     LLM_SYSTEM_PROMPT,
     PromptRequest,
     TemplatePromptGenerator,

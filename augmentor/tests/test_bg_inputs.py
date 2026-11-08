@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 import pytest
 
-from background_swap.classes import find_class_names_file, load_class_names
-from background_swap.inputs import collect_items, load_image_bgr, looks_non_train
+from background_swap.dataset.classes import find_class_names_file, load_class_names
+from background_swap.dataset.inputs import collect_items, load_image_bgr, looks_non_train
 
 
 def _dataset(tmp_path: Path, n: int):

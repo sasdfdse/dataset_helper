@@ -3,13 +3,13 @@ import os
 
 import pytest
 
-from background_swap.domain import Detection
-from background_swap import export as export_mod
-from background_swap.export import ExportResult, NonTrainTargetError, export_accepted
-from background_swap.progress import NullProgress
-from background_swap.report import build_report, class_recall, merge_recall, write_report
-from background_swap.store import append_jsonl
-from background_swap.workflow import BackgroundSwapWorkflow
+from background_swap.common.domain import Detection
+from background_swap.dataset import export as export_mod
+from background_swap.dataset.export import ExportResult, NonTrainTargetError, export_accepted
+from background_swap.common.progress import NullProgress
+from background_swap.dataset.report import build_report, class_recall, merge_recall, write_report
+from background_swap.common.store import append_jsonl
+from background_swap.pipeline.workflow import BackgroundSwapWorkflow
 from tests.bg_fakes import *  # noqa: F401,F403
 
 _settings = make_settings

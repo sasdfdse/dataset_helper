@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from background_swap.settings import BackgroundSwapSettings, load_settings, save_settings
+from background_swap.common.settings import BackgroundSwapSettings, load_settings, save_settings
 from tests.test_bg_results import make_output
 
 needs_display = pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="no DISPLAY")

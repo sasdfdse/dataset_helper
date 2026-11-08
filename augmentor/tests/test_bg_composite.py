@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
-from background_swap.composite import alpha_map, composite, diff_image, mask_overlay
-from background_swap.domain import Job, MaskSet
-from background_swap.inpaint import run_inpaint, working_size
-from background_swap.settings import BackgroundSwapSettings
+from background_swap.stages.composite import alpha_map, composite, diff_image, mask_overlay
+from background_swap.common.domain import Job, MaskSet
+from background_swap.stages.inpaint import run_inpaint, working_size
+from background_swap.common.settings import BackgroundSwapSettings
 
 
 def test_composite_protect_is_bytewise_original():
