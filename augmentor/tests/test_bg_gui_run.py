@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from background_swap.common.settings import BackgroundSwapSettings, load_settings, save_settings
-from tests.test_bg_results import make_output
+from tests.test_bg_results import make_other_dataset, make_output
 
 needs_display = pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="no DISPLAY")
 
@@ -373,3 +373,17 @@ def test_diff_panel_title_notes_jpeg_fallback(env):
     assert "JPEG" in tab._titles[3][0].cget("text")
     tab._step(1)                                  # PNG가 있는 레코드
     assert "JPEG" not in tab._titles[3][0].cget("text")
+
+
+@needs_display
+@pytest.mark.parametrize("with_items", [True, False])
+def test_results_use_originals_from_items_not_widget_folders(env, with_items):
+    tab, _, (images, labels, out) = env
+    oi, ol = make_other_dataset(out.parent)          # 같은 stem 'a'를 가진 다른 폴더
+    tab.apply_settings(BackgroundSwapSettings(images_dir=oi, labels_dir=ol, output_dir=out))
+    if not with_items:
+        (out / "items.jsonl").unlink()               # 예전 결과 폴더: 현재 위젯 폴더로 대체
+    assert tab.load_results(out)
+    expected = (images / "a.png") if with_items else (oi / "a.png")
+    assert tab._orig_index["a"].image_path == expected
+    assert tab._orig_lbl.image is not None           # 원본 패널이 표시됨

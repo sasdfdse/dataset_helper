@@ -25,7 +25,7 @@ from gui.background_state import (format_axis_values, load_ui_state,
                                   parse_axis_values, quick_mask_preview,
                                   save_ui_state, to_number as _to_number)
 from gui.background_results import (ResultList, build_result_list, describe_record,
-                                    index_originals, load_panels)
+                                    index_originals, load_panels, originals_from_items)
 from gui.background_run import PREVIEW_N, RunMixin
 from gui.keep_item_dialog import KeepItemDialog
 from gui.worker_process import WorkerProcess
@@ -615,11 +615,19 @@ class BackgroundTab(RunMixin, ttk.Frame):
         """result_dir(Manifest/Accepted/Rejected/masks)의 결과를 4패널 탐색 모드로 연다."""
         rl = build_result_list(result_dir)
         self._results, self._result_dir, self._ridx = rl, Path(result_dir), 0
-        images, labels = (self._vars[k].get().strip() for k in ("images_dir", "labels_dir"))
+        # 원본은 그 결과를 만든 실행의 items.jsonl 기준 (현재 위젯 폴더는 다른 데이터셋일 수 있다).
+        # items.jsonl이 없는 폴더에서만 현재 Images/Labels 폴더로 대체한다.
         try:
-            self._orig_index = index_originals(Path(images), Path(labels)) if images and labels else {}
+            index = originals_from_items(Path(result_dir))
         except Exception:
-            self._orig_index = {}
+            index = {}
+        if index is None:
+            images, labels = (self._vars[k].get().strip() for k in ("images_dir", "labels_dir"))
+            try:
+                index = index_originals(Path(images), Path(labels)) if images and labels else {}
+            except Exception:
+                index = {}
+        self._orig_index = index
         if not rl.entries:
             self._leave_results()
             self._status_lbl.configure(text=f"표시할 결과가 없습니다 ({rl.summary()})")

@@ -87,6 +87,26 @@ def index_originals(images_dir: Path, labels_dir: Path) -> dict[str, ImageItem]:
     return {it.stem: it for it in items}
 
 
+def originals_from_items(result_dir: Path) -> dict[str, ImageItem] | None:
+    """result_dir/items.jsonl(실행 당시 입력 목록)의 stem → 원본/라벨 경로. 파일이 없으면 None.
+
+    결과를 만든 입력 폴더가 지금 GUI에 지정된 폴더와 달라도 (같은 stem이 겹쳐도) 올바른 원본을 쓴다.
+    """
+    path = Path(result_dir) / "items.jsonl"
+    if not path.is_file():
+        return None
+    out: dict[str, ImageItem] = {}
+    for r in read_jsonl(path):
+        stem, img, lbl = r.get("stem"), r.get("image_path"), r.get("label_path")
+        if not (isinstance(stem, str) and isinstance(img, str) and isinstance(lbl, str)):
+            continue
+        w, h = r.get("width"), r.get("height")
+        out.setdefault(stem, ImageItem(stem, Path(img), Path(lbl),
+                                       w if isinstance(w, int) else 0,
+                                       h if isinstance(h, int) else 0))
+    return out
+
+
 def _fit(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     if mask.shape[:2] == shape:
         return mask

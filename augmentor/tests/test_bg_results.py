@@ -4,17 +4,19 @@ import cv2
 import numpy as np
 import pytest
 
-from background_swap.stages.composite import diff_image
+from background_swap.stages.composite import diff_image, draw_boxes
+from core.label import read_labels
 from background_swap.common.store import imwrite_atomic, write_mask
 from gui.background_results import (DIFF_JPEG_NOTE, build_result_list, describe_record, format_export_message,
                                     format_report, index_originals, load_panels, load_report,
+                                    originals_from_items,
                                     result_image_path)
 
 H, W = 40, 60
 
 
-def make_output(tmp_path, with_files=True):
-    """Manifest + 이미지 + 마스크를 가진 가짜 output_dir. 반환: (images, labels, out)."""
+def make_output(tmp_path, with_files=True, with_items=True):
+    """Manifest + 이미지 + 마스크(+ items.jsonl)를 가진 가짜 output_dir. 반환: (images, labels, out)."""
     images, labels, out = tmp_path / "images", tmp_path / "labels", tmp_path / "out"
     for d in (images, labels):
         d.mkdir()
@@ -57,7 +59,38 @@ def make_output(tmp_path, with_files=True):
     ]
     out.mkdir(exist_ok=True)
     (out / "Manifest.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    if with_items:      # 실행이 Stage 0에서 쓰는 입력 목록
+        (out / "items.jsonl").write_text(json.dumps(
+            {"stem": "a", "image_path": str(images / "a.png"), "label_path": str(labels / "a.txt"),
+             "width": W, "height": H}) + "\n")
     return images, labels, out
+
+
+def make_other_dataset(tmp_path):
+    """같은 stem 'a'를 가진 다른 데이터셋 폴더 (원본 내용/라벨이 다름)."""
+    oi, ol = tmp_path / "other" / "images", tmp_path / "other" / "labels"
+    oi.mkdir(parents=True)
+    ol.mkdir(parents=True)
+    cv2.imwrite(str(oi / "a.png"), np.zeros((H, W, 3), np.uint8))
+    (ol / "a.txt").write_text("0 0.2 0.2 0.1 0.1\n")
+    return oi, ol
+
+
+def test_originals_from_items_ignores_other_folder_with_same_stem(tmp_path):
+    images, labels, out = make_output(tmp_path)
+    make_other_dataset(tmp_path)
+    idx = originals_from_items(out)
+    assert set(idx) == {"a"}
+    assert (idx["a"].image_path, idx["a"].label_path) == (images / "a.png", labels / "a.txt")
+    assert (idx["a"].width, idx["a"].height) == (W, H)
+    p = load_panels(out, build_result_list(out).entries[0], idx["a"])
+    assert np.array_equal(p.orig, draw_boxes(cv2.imread(str(images / "a.png")),
+                                             read_labels(labels / "a.txt")))
+
+
+def test_originals_from_items_missing_file_returns_none(tmp_path):
+    _, _, out = make_output(tmp_path, with_items=False)
+    assert originals_from_items(out) is None
 
 
 def test_build_result_list_filters_and_counts(tmp_path):
