@@ -211,5 +211,9 @@ def format_report(report: dict) -> str:
 def format_export_message(event: dict) -> str:
     if "copied" not in event:
         return "내보내기가 완료되었습니다."
-    return (f"내보내기 완료: {event['copied']}쌍 복사, "
-            f"이미 있어 건너뜀 {event.get('skipped_existing', 0)}쌍")
+    msg = (f"내보내기 완료: {event['copied']}쌍 복사, "
+           f"이미 있어 건너뜀 {event.get('skipped_existing', 0)}쌍")
+    unaccepted = event.get("skipped_unaccepted", 0)
+    if isinstance(unaccepted, int) and unaccepted > 0:
+        msg += f", Manifest에 승인 기록이 없어 건너뜀 {unaccepted}쌍"
+    return msg

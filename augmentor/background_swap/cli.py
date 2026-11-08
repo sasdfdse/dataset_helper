@@ -121,7 +121,8 @@ def _execute(args: argparse.Namespace, factory_builder: FactoryBuilder | None,
                                 s.allow_non_train)
         except NonTrainTargetError as e:
             raise _Fail(EXIT_NON_TRAIN, str(e))
-        return {"copied": r.copied, "skipped_existing": r.skipped_existing}
+        return {"copied": r.copied, "skipped_existing": r.skipped_existing,
+                "skipped_unaccepted": r.skipped_unaccepted}
 
     errors = validate_settings(s)
     if errors:

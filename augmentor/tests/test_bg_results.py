@@ -149,6 +149,11 @@ def test_format_export_message():
     assert "3" in format_export_message({"event": "done", "copied": 3, "skipped_existing": 2})
     assert "2" in format_export_message({"event": "done", "copied": 3, "skipped_existing": 2})
     assert format_export_message({"event": "done"})
+    assert "승인 기록" not in format_export_message(
+        {"event": "done", "copied": 3, "skipped_existing": 2, "skipped_unaccepted": 0})
+    msg = format_export_message({"event": "done", "copied": 3, "skipped_existing": 2,
+                                 "skipped_unaccepted": 4})
+    assert "승인 기록이 없어 건너뜀 4쌍" in msg
 
 
 def _protect(out):

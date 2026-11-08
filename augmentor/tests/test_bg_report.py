@@ -8,7 +8,7 @@ from background_swap.dataset import export as export_mod
 from background_swap.dataset.export import ExportResult, NonTrainTargetError, export_accepted
 from background_swap.common.progress import NullProgress
 from background_swap.dataset.report import build_report, class_recall, merge_recall, write_report
-from background_swap.common.store import append_jsonl
+from background_swap.common.store import append_jsonl, read_jsonl
 from background_swap.pipeline.workflow import BackgroundSwapWorkflow
 from tests.bg_fakes import *  # noqa: F401,F403
 
@@ -20,13 +20,18 @@ def _rec(status, reasons=(), scene=None):
             "status": status, "reasons": list(reasons), "checks": {}, "warnings": []}
 
 
-def _accepted(tmp_path, stems):
+def _accepted(tmp_path, stems, record=True):
+    """Accepted/에 `{stem}_bgswap{n}` 쌍을 만들고 (record면) Manifest에 accepted 레코드를 쓴다."""
     out = tmp_path / "out"
     (out / "Accepted" / "images").mkdir(parents=True)
     (out / "Accepted" / "labels").mkdir(parents=True)
     for s in stems:
         (out / "Accepted" / "images" / f"{s}.jpg").write_bytes(b"img-" + s.encode())
         (out / "Accepted" / "labels" / f"{s}.txt").write_text("0 0.5 0.5 0.1 0.1\n")
+        if record:
+            stem, n = s.rsplit("_bgswap", 1)
+            append_jsonl(out / "Manifest.jsonl", {**_rec("accepted"), "stem": stem,
+                                                   "variant": int(n)})
     return out
 
 
@@ -99,6 +104,97 @@ def test_export_creates_dirs_and_ignores_unpaired_images(tmp_path):
     imgs, lbls = tmp_path / "train" / "images", tmp_path / "train" / "labels"
     assert export_accepted(out, imgs, lbls, False) == ExportResult(1, 0)
     assert [p.name for p in imgs.iterdir()] == ["a_bgswap1.jpg"]
+
+
+def test_export_skips_pairs_without_accepted_manifest_record(tmp_path):
+    out = _accepted(tmp_path, ["a_bgswap1"])
+    _accepted_extra = out / "Accepted"
+    for name in ("b_bgswap1", "a_bgswap2"):      # 파일만 있고 accepted 레코드 없음 (고아)
+        (_accepted_extra / "images" / f"{name}.jpg").write_bytes(b"orphan")
+        (_accepted_extra / "labels" / f"{name}.txt").write_text("0 0.5 0.5 0.1 0.1\n")
+    append_jsonl(out / "Manifest.jsonl", {**_rec("rejected"), "stem": "b"})
+    imgs, lbls = _dest(tmp_path)
+    r = export_accepted(out, imgs, lbls, False)
+    assert r == ExportResult(copied=1, skipped_existing=0, skipped_unaccepted=2)
+    assert [p.name for p in imgs.iterdir()] == ["a_bgswap1.jpg"]
+    assert [p.name for p in lbls.iterdir()] == ["a_bgswap1.txt"]
+
+
+def test_export_without_manifest_copies_nothing(tmp_path):
+    out = _accepted(tmp_path, ["a_bgswap1"], record=False)
+    imgs, lbls = _dest(tmp_path)
+    assert export_accepted(out, imgs, lbls, False) == ExportResult(0, 0, 1)
+    assert list(imgs.iterdir()) == []
+
+
+def test_export_result_positional_compat():
+    r = ExportResult(2, 1)
+    assert (r.copied, r.skipped_existing, r.skipped_unaccepted) == (2, 1, 0)
+
+
+def test_export_orphan_after_crash_then_reject_on_resume(tmp_path):
+    """Accepted 파일 기록 후 Manifest 기록 전에 중단 → 재개 시 거절: 내보내지 않고 고아 파일도 지운다."""
+    s = _settings(tmp_path, n_images=1, use_llm=False, num_variants=1, max_attempts=1)
+
+    class Crash(Exception):
+        pass
+
+    wf = BackgroundSwapWorkflow(s, FakeFactory.default(validator=FakeValidator([vlm_json(True)])),
+                                NullProgress(), [])
+    orig = wf._append_manifest
+
+    def boom(rec):
+        if rec["status"] == "accepted":
+            raise Crash()
+        orig(rec)
+    wf._append_manifest = boom
+    with pytest.raises(Crash):
+        wf.run()
+    acc = s.output_dir / "Accepted"
+    stale = [acc / "images" / "img_000_bgswap1.jpg", acc / "labels" / "img_000_bgswap1.txt",
+             acc / "previews" / "img_000_bgswap1.jpg"]
+    assert all(p.exists() for p in stale)
+    # 미리 만든 Accepted 파일로 export 필터도 확인 (Manifest에 accepted 없음)
+    imgs, lbls = _dest(tmp_path / "pre")
+    assert export_accepted(s.output_dir, imgs, lbls, False) == ExportResult(0, 0, 1)
+
+    BackgroundSwapWorkflow(s, FakeFactory.default(validator=FakeValidator([vlm_json(False)])),
+                           NullProgress(), []).run()
+    statuses = [r["status"] for r in read_jsonl(s.output_dir / "Manifest.jsonl")]
+    assert statuses == ["rejected", "exhausted"]
+    assert not any(p.exists() for p in stale)
+    imgs, lbls = _dest(tmp_path / "post")
+    assert export_accepted(s.output_dir, imgs, lbls, False) == ExportResult(0, 0, 0)
+    assert list(imgs.iterdir()) == []
+
+
+def test_export_orphan_counted_when_files_survive(tmp_path):
+    """reject 경로를 거치지 않은 고아(예: 수동 복사)도 export가 걸러내고 skipped_unaccepted 1."""
+    s = _settings(tmp_path, n_images=1, use_llm=False, num_variants=1, max_attempts=1)
+    BackgroundSwapWorkflow(s, FakeFactory.default(validator=FakeValidator([vlm_json(False)])),
+                           NullProgress(), []).run()
+    acc = s.output_dir / "Accepted"
+    (acc / "images").mkdir(parents=True, exist_ok=True)
+    (acc / "labels").mkdir(parents=True, exist_ok=True)
+    (acc / "images" / "img_000_bgswap1.jpg").write_bytes(b"orphan")
+    (acc / "labels" / "img_000_bgswap1.txt").write_text("0 0.5 0.5 0.3 0.3\n")
+    imgs, lbls = _dest(tmp_path / "dst")
+    r = export_accepted(s.output_dir, imgs, lbls, False)
+    assert (r.copied, r.skipped_unaccepted) == (0, 1)
+    assert list(imgs.iterdir()) == [] and list(lbls.iterdir()) == []
+
+
+def test_reject_keeps_accepted_files_of_other_variant(tmp_path):
+    """거절 시 정리는 같은 (stem, variant)의 고아만 — 다른 변형의 정상 Accepted 파일은 그대로."""
+    s = _settings(tmp_path, n_images=1, use_llm=False, num_variants=2, max_attempts=1)
+    # 변형 1 승인, 변형 2 거절 (VLM 응답 순서)
+    BackgroundSwapWorkflow(s, FakeFactory.default(
+        validator=FakeValidator([vlm_json(True), vlm_json(False)])), NullProgress(), []).run()
+    acc = s.output_dir / "Accepted"
+    assert (acc / "images" / "img_000_bgswap1.jpg").exists()
+    assert not (acc / "images" / "img_000_bgswap2.jpg").exists()
+    imgs, lbls = _dest(tmp_path / "dst")
+    assert export_accepted(s.output_dir, imgs, lbls, False) == ExportResult(1, 0, 0)
 
 
 def test_export_refuses_val_target(tmp_path):

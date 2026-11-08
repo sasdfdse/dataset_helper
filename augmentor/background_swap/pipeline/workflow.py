@@ -455,6 +455,12 @@ class BackgroundSwapWorkflow:
                            draw_boxes(out, self._labels(stem)))
         else:
             imwrite_atomic(self.rejected_path(stem, n, job.attempt), out)
+            if (stem, n) not in self._accepted:
+                # 이전 실행이 Accepted 파일을 쓴 뒤 Manifest 기록 전에 중단됐다면 그 파일은
+                # 승인 기록이 없는 고아다. 이번 판정이 거절이므로 지운다.
+                for p in (self.accepted_image_path(stem, n), self.accepted_label_path(stem, n),
+                          self.accepted_preview_path(stem, n)):
+                    p.unlink(missing_ok=True)
 
 
 def run_preview(settings: BackgroundSwapSettings, factory: ModelFactory, progress: Progress,

@@ -129,6 +129,7 @@ def test_preview_and_export(tmp_path):
                  "--labels-dir", str(dst / "labels")],
                 lambda s, c: FakeFactory.default(), buf) == 0
     assert _events(buf)[-1]["copied"] == 6
+    assert _events(buf)[-1]["skipped_unaccepted"] == 0
 
 
 def test_export_to_non_train_exit_3(tmp_path):
