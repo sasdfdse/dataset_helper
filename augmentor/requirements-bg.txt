@@ -1,7 +1,7 @@
 # Background Swap augmentation dependencies.
 # torch는 CUDA 버전에 맞게 별도 설치 (e.g. torch 2.13+cu130). 이 파일은 torch를 설치/교체하지 않는다.
-transformers>=4.56
-diffusers>=0.35
+transformers>=5.22
+diffusers>=0.42
 accelerate
 bitsandbytes
 huggingface_hub
