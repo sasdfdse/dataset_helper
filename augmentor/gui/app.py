@@ -3,6 +3,7 @@ from tkinter import ttk
 
 from gui.video_tab import VideoTab
 from gui.augment_tab import AugmentTab
+from gui.background_tab import BackgroundTab
 
 
 class App(tk.Tk):
@@ -23,12 +24,15 @@ class App(tk.Tk):
 
         video_frame = ttk.Frame(notebook)
         aug_frame = ttk.Frame(notebook)
+        bg_frame = ttk.Frame(notebook)
 
         notebook.add(video_frame, text="  📹 Video Tool  ")
         notebook.add(aug_frame, text="  🔧 Augmentation  ")
+        notebook.add(bg_frame, text="  🖼 Background Swap  ")
 
         VideoTab(video_frame).pack(fill=tk.BOTH, expand=True)
         AugmentTab(aug_frame).pack(fill=tk.BOTH, expand=True)
+        BackgroundTab(bg_frame).pack(fill=tk.BOTH, expand=True)
 
     def _apply_theme(self, style: ttk.Style):
         BG      = "#1e1e2e"   # 배경 (어두운 남색)
