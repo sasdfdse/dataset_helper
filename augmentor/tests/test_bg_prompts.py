@@ -190,3 +190,8 @@ def test_sanitize_removal_repeats_until_stable():
     out = sanitize_prompt("a y x z b", ["x", "y z"])
     assert "y z" not in out and "x" not in out.split()
     assert out == "a b"
+
+
+def test_system_prompt_treats_camera_style_as_style_phrase():
+    low = LLM_SYSTEM_PROMPT.lower()
+    assert "camera or photo style" in low and "dslr" in low and "end of the sentence" in low

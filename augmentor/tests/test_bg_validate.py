@@ -122,3 +122,9 @@ def test_combine_checks_and_rule_reasons_first():
     assert r.reasons == ["too_little_change", "new_object:gdino"]
     assert r.checks == {"mean_change": 1.0, "gdino_new_count": 1, "vlm": None}
     assert base == {"mean_change": 1.0}  # input not mutated
+
+
+def test_vlm_prompt_does_not_prime_synthetic():
+    low = VLM_PROMPT.format(class_names="robot").lower()
+    for word in ("synthetic", "generated", "replaced", "composited"):
+        assert word not in low

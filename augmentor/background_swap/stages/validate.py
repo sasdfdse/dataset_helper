@@ -14,8 +14,7 @@ import numpy as np
 from background_swap.common.domain import Detection, ValidationResult
 
 VLM_PROMPT = (
-    "You are checking a synthetic image whose background was replaced by an image generator. "
-    "The image has bounding boxes drawn on it marking the original target objects.\n"
+    "This is a photo with colored bounding boxes drawn on it marking target objects.\n"
     "Target object classes: {class_names}.\n"
     "Answer these questions about the image:\n"
     "1. natural_indoor_venue: does the background look like a natural, realistic indoor venue "
