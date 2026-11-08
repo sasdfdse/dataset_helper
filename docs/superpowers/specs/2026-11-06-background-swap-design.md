@@ -267,6 +267,7 @@ Export                                      → 데이터셋 images/labels 폴�
 | 모델 접근 불가 | 실행 전 사전 점검(모델 ID별 접근 확인) 실패 시 시작하지 않고 목록 표시 |
 | CUDA OOM | 해당 항목 1회 재시도(캐시 비움). 재실패 시 단계 중단, "고급 설정에서 해상도를 낮추거나 더 작은 모델" 안내 |
 | 이미지 읽기 실패 / 라벨 파일 없음 | 해당 이미지 건너뜀, Manifest `skipped` |
+| 지원하지 않는 라벨 형식 (5필드가 아닌 줄, 정수가 아닌 클래스 등) | 이미지 건너뜀, `skipped: unsupported_label_format` |
 | 필수 유지 항목 실패 | 이미지 건너뜀, `skipped: required_keep_missing:<name>` |
 | 선택 유지 항목 실패 | 진행, `keep_not_found:<name>` 경고 |
 | 인페인팅 영역 부족 | `skipped: small_inpaint_area` |

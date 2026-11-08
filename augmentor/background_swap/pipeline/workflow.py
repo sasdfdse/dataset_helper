@@ -57,6 +57,24 @@ class ModelFactory(Protocol):
     def validator(self) -> AbstractContextManager[ImageValidator]: ...
 
 
+UNSUPPORTED_LABEL_FORMAT = "unsupported_label_format"
+
+
+def _read_labels_strict(label_path: Path) -> list[BBox] | None:
+    """core.label.read_labels로 읽되, 버려진 줄(5필드가 아닌 줄)이 있거나 파싱 예외면 None.
+
+    read_labels는 기존 augmentor와 공유하므로 동작을 바꾸지 않고, 비어 있지 않은 줄 수와
+    파싱된 박스 수를 비교해 지원하지 않는 형식(신뢰도 열, 세그멘테이션 폴리곤, '0.0' 클래스 등)을 걸러낸다.
+    """
+    try:
+        boxes = read_labels(label_path)
+        with open(label_path) as f:
+            lines = sum(1 for line in f if line.strip())
+    except ValueError:   # int('0.0'), float 변환 실패, UnicodeDecodeError
+        return None
+    return boxes if len(boxes) == lines else None
+
+
 def _key(stem: str, variant, attempt) -> tuple:
     return (stem, variant, attempt)
 
@@ -292,12 +310,14 @@ class BackgroundSwapWorkflow:
         atomic_write_text(self.recall_path, json.dumps(total, ensure_ascii=False))
 
     def _make_masks(self, it: ImageItem, segmenter: Segmenter, detector: TextDetector) -> None:
-        img = load_image_bgr(it.image_path)
-        if img is None:
+        boxes = _read_labels_strict(Path(it.label_path))
+        img = load_image_bgr(it.image_path) if boxes is not None else None
+        if boxes is None:
+            meta = {"warnings": [], "skip_reason": UNSUPPORTED_LABEL_FORMAT}
+        elif img is None:
             meta = {"warnings": [], "skip_reason": "unreadable_image"}
         else:
-            ms = build_mask_set(img, read_labels(it.label_path), self.settings,
-                                segmenter, detector)
+            ms = build_mask_set(img, boxes, self.settings, segmenter, detector)
             meta = {"warnings": list(ms.warnings), "skip_reason": ms.skip_reason}
             if ms.skip_reason is None:
                 for name in MASK_NAMES:

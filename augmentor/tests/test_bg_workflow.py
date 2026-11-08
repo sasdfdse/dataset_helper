@@ -281,3 +281,28 @@ def test_timings_accumulate_across_runs(tmp_path):
     BackgroundSwapWorkflow(s, FakeFactory.default(), NullProgress(), []).run()
     t2 = json.loads((s.output_dir/"timings.json").read_text())
     assert all(t2[k] >= t1[k] for k in t1)
+
+
+@pytest.mark.parametrize("label", ["0 0.5 0.5 0.3 0.3 0.91\n",            # 신뢰도 열 (6필드)
+                                   "0 0.5 0.5 0.3 0.3\n0 0.1 0.1\n",       # 일부 줄만 잘못됨
+                                   "0.0 0.5 0.5 0.3 0.3\n",                # 실수형 클래스
+                                   "0 0.5 abc 0.3 0.3\n"])                 # 숫자가 아님
+def test_unsupported_label_format_skipped_and_run_continues(tmp_path, label):
+    s = _settings(tmp_path, n_images=2, use_llm=False, num_variants=1, max_attempts=1)
+    (s.labels_dir / "img_000.txt").write_text(label)
+    for _ in range(2):     # 재실행해도 스킵 레코드는 한 번만
+        BackgroundSwapWorkflow(s, FakeFactory.default(), NullProgress(), []).run()
+    m = read_jsonl(s.output_dir / "Manifest.jsonl")
+    assert [(r["stem"], r["status"], r["reasons"]) for r in m] == [
+        ("img_000", "skipped", ["unsupported_label_format"]),
+        ("img_001", "accepted", [])]
+    assert sorted(p.name for p in (s.output_dir / "Accepted" / "images").iterdir()) == [
+        "img_001_bgswap1.jpg"]
+
+
+def test_blank_lines_in_label_are_not_unsupported(tmp_path):
+    s = _settings(tmp_path, n_images=1, use_llm=False, num_variants=1, max_attempts=1)
+    (s.labels_dir / "img_000.txt").write_text("\n0 0.5 0.5 0.3 0.3\n   \n")
+    BackgroundSwapWorkflow(s, FakeFactory.default(), NullProgress(), []).run()
+    m = read_jsonl(s.output_dir / "Manifest.jsonl")
+    assert [r["status"] for r in m] == ["accepted"]
