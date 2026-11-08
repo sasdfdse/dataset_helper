@@ -7,7 +7,8 @@ This package has two functions: one converts .webm files to .mp4, and the other 
 
 **python dependency install :** 
 
-1. pip install -r requirements.txt
+1. cd ~/ws/src/dataset_helper/augmentor
+2. pip install -r requirements.txt
 
 **build :**
 1. cd ~/ws/src/dataset_helper
@@ -29,23 +30,26 @@ YOLO 라벨이 있는 이미지에서 **라벨 객체와 "유지할 배경"(경�
 
 ### 요구 사항
 
+- **Python 3.12 이상 필요** (3.11 이하에서는 background_swap 모듈 import가 실패합니다).
 - 실측 환경: RTX 4060 Laptop (VRAM 8GB), RAM 62GB. 이보다 작은 GPU는 검증하지 않았다.
 - 인페인팅 최대 해상도 기본값은 긴 변 1280px. 원본이 더 크면 줄여서 생성한 뒤 원본 해상도로 복원한다.
 - 처리 시간 (SDXL 인페인팅, 30 step, 생성 단계만): 1280x720 약 23초/장, 1920x1080 약 51초/장. 변형 수(`num_variants`)와 재시도만큼 곱해진다. 대량 실행은 장시간 실행을 전제로 하고, 입력이 많으면 `frame_stride`(N장마다 1장 선택)로 줄인다.
-- **첫 실행 시 모델을 자동 다운로드한다 (합계 약 22GB).** 저장 위치는 `~/.cache/huggingface`이며 git 저장소에는 들어가지 않는다. 디스크 여유 공간을 확인할 것. 기본 모델은 로그인 없이 받을 수 있다. 로그인이 필요한 모델로 바꿨다면 `hf auth login`을 먼저 실행한다.
+- **첫 실행 시 모델을 자동 다운로드한다 (합계 약 24GB).** 저장 위치는 `~/.cache/huggingface`이며 git 저장소에는 들어가지 않는다. 디스크 여유 공간을 확인할 것. 기본 모델은 로그인 없이 받을 수 있다. 로그인이 필요한 모델로 바꿨다면 `hf auth login`을 먼저 실행한다.
 
 ### 설치
 
 GUI가 워커 프로세스를 **GUI와 같은 파이썬**으로 실행하므로, 설치한 venv의 파이썬으로 GUI를 띄워야 한다.
 
+Python 3.12 이상 필요 (3.11 이하에서는 background_swap 모듈 import가 실패합니다).
+
 ```bash
+sudo apt install python3-venv python3-tk   # 처음 한 번 (tkinter는 GUI에 필요)
 cd ~/ws/src/dataset_helper/augmentor
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install -r requirements.txt -r requirements-bg.txt
 ```
 
 - `torch`는 `requirements-bg.txt`에 들어 있지 않다. 사용하는 머신의 CUDA 버전에 맞는 torch를 따로 설치한다 (실측 환경: torch 2.13 + cu130, `--system-site-packages`로 시스템의 torch를 그대로 사용).
-- `tkinter`가 필요하다 (`sudo apt install python3-tk`).
 
 ### 실행
 
@@ -60,16 +64,16 @@ cd ~/ws/src/dataset_helper/augmentor
 
 GUI에서 "Background Swap" 탭을 연다.
 
-1. **폴더 지정** ("데이터" 그룹): Images 폴더, Labels 폴더, 출력 폴더. 클래스 이름 파일(`Classes file`)을 지정하면 새 객체 검사와 클래스별 recall을 사용할 수 있다 (라벨 폴더 근처에 있으면 자동으로 채워진다).
-2. **유지할 배경 항목 추가** ("유지할 배경" 그룹). 항목마다 방식을 고른다.
-   - **색상 영역**: 필드/매트처럼 넓은 단색 영역. 미리보기 이미지에서 해당 영역을 클릭하면 그 색을 기준으로 범위가 설정된다.
-   - **텍스트 검출**: 펜스, 골대처럼 물체 형태. 검출용 프롬프트(영어 단어/구, 예: `goal post`)를 입력한다.
-   - **필수** 체크: 필수 항목을 못 찾은 이미지는 건너뛴다. 필수가 아니면 그 항목 없이 진행하고 경고만 기록한다.
+1. **폴더 지정** ("데이터" 그룹): `Images folder`, `Labels folder`, `Output folder`. 클래스 이름 파일(`Classes file`)을 지정하면 새 객체 검사와 클래스별 recall을 사용할 수 있다 (라벨 폴더 근처에 있으면 자동으로 채워진다).
+2. **유지할 배경 항목 추가** ("유지할 배경" 그룹의 `추가` 버튼). 항목마다 방식(`color` / `text`)을 고른다.
+   - **색상 영역** (`color`): 필드/매트처럼 넓은 단색 영역. `미리보기에서 클릭` 후 미리보기 이미지에서 해당 영역을 클릭하면 그 색을 기준으로 범위가 설정된다.
+   - **텍스트 검출** (`text`): 펜스, 골대처럼 물체 형태. 검출용 프롬프트(영어 단어/구, 예: `goal post`)를 입력한다.
+   - `필수` 체크: 필수 항목을 못 찾은 이미지는 건너뛴다. 필수가 아니면 그 항목 없이 진행하고 경고만 기록한다.
 3. 생성 파라미터(변형 수, 최대 시도 횟수 등)와 장면 축(대회장 종류, 조명 등. 값은 `;`로 구분)을 확인한다.
-4. **Preview**: 무작위 3장에 전체 파이프라인을 돌려 `{output_dir}/_preview/`에 만들고 4패널(원본 / 마스크 / 생성 결과 / 차이 이미지)로 보여 준다. 마스크 색: 빨강=객체, 주황=객체 보호 링/그림자, 초록=유지 배경, 무색=새로 그릴 영역. **대량 실행 전에 마스크가 맞는지 반드시 확인한다.** 유지 항목이 틀리면 1~3으로 돌아가 고친다.
-5. **Run**: 설정 검증 후 `run_settings.json`을 기록하고 워커를 실행한다. **Stop**으로 중단할 수 있고, 같은 출력 폴더로 다시 Run하면 이어서 진행한다.
-6. **Report**: 상태별(accepted / rejected / skipped / exhausted) 개수, 거부 사유, 장면 축 사용 분포, 클래스별 GDINO recall을 본다.
-7. **Export**: Accepted 결과를 지정한 학습 데이터셋의 images / labels 폴더로 복사한다. 같은 이름의 파일이 있으면 덮어쓰지 않고 건너뛰며 건너뛴 개수를 알려 준다.
+4. **`Preview N=3`**: 무작위 3장에 전체 파이프라인을 돌려 `{output_dir}/_preview/`에 만들고 4패널(원본 / 마스크 / 생성 결과 / 차이 이미지)로 보여 준다. 마스크 색: 빨강=객체, 주황=객체 보호 링/그림자, 초록=유지 배경, 무색=새로 그릴 영역. **대량 실행 전에 마스크가 맞는지 반드시 확인한다.** 유지 항목이 틀리면 1~3으로 돌아가 고친다.
+5. **`▶ Run`**: 설정 검증 후 `run_settings.json`을 기록하고 워커를 실행한다. **`■ Stop`**으로 중단할 수 있고, 같은 출력 폴더로 다시 Run하면 이어서 진행한다. 생성 설정을 바꾼 채 같은 출력 폴더에서 다시 Run하면 확인창이 뜨며 `새 출력 폴더` / `덮어쓰기` / `취소` 중에서 고른다.
+6. **`Report`**: 상태별(accepted / rejected / skipped / exhausted) 개수, 거부 사유, 장면 축 사용 분포, 클래스별 GDINO recall을 본다.
+7. **`Export`**: Accepted 결과를 지정한 학습 데이터셋의 images / labels 폴더로 복사한다. 같은 이름의 파일이 있으면 덮어쓰지 않고 건너뛰며 건너뛴 개수를 알려 준다.
 
 ### 출력 폴더 구조
 
@@ -94,6 +98,7 @@ GUI에서 "Background Swap" 탭을 연다.
 - **train 이미지만 사용한다.** val/test 이미지에서 만든 증강본이 학습 데이터에 섞이면 평가가 무의미해진다. 입력 또는 Export 경로에 `val`, `valid`, `validation`, `test` 폴더 이름이 들어 있으면 GUI가 경고 확인창을 띄운다. 의도한 경우가 아니면 취소한다.
 - **새 객체 검사는 위험을 줄이는 필터이지 보증이 아니다.** 생성된 배경에 라벨 대상 객체가 새로 생기면 라벨 누락이 되어 오히려 학습을 해친다. 이를 Grounding DINO와 VLM으로 걸러내지만, 검출기가 못 찾는다고 해서 새 객체가 없다는 뜻은 아니다. 특히 작은 객체 클래스는 recall이 낮을 수 있으니 Report의 클래스별 recall을 확인하고, Accepted/previews를 일부 직접 눈으로 검토한 뒤 Export한다.
 - 유지 항목의 색상 방식은 배경에 비슷한 색이 있으면 과검출될 수 있고, 텍스트 방식은 검출기 품질에 좌우된다. Preview로 확인한다.
+- VRAM 부족(OOM)이 나면 "고급 설정"(기본 접힘)의 `Max resolution px`를 낮추거나 다른 GPU 사용 프로그램을 종료한다.
 - 원본 객체와 새 배경의 조명이 어긋날 수 있다 (학습 다양성 목적상 허용).
 
 ### 모델 라이선스
