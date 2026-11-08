@@ -130,10 +130,10 @@ def _execute(args: argparse.Namespace, factory_builder: FactoryBuilder | None,
     if args.command == "run":
         _check_resume(s, args.settings)
     class_names = _class_names(s, progress)
-    factory = _prepare_models(s, factory_builder, class_names)
-
-    # 라이브러리가 stdout에 출력해도 JSON Lines을 오염시키지 않도록 stderr로 보낸다.
+    # 무거운 모듈 import/preflight/모델 팩토리/워크플로의 stdout 출력은 stderr로 보낸다.
+    # progress는 리다이렉트 이전에 바인딩된 실제 stdout 스트림에 계속 쓴다.
     with contextlib.redirect_stdout(sys.stderr):
+        factory = _prepare_models(s, factory_builder, class_names)
         if args.command == "run":
             BackgroundSwapWorkflow(s, factory, progress, class_names).run()
             return {}

@@ -140,3 +140,50 @@ def test_export_to_non_train_exit_3(tmp_path):
     assert main(["export", "--settings", str(p), "--images-dir", str(dst / "images"),
                  "--labels-dir", str(dst / "labels")], None, buf) == 3
     assert _events(buf)[-1]["code"] == 3
+
+
+def test_prints_during_model_import_go_to_stderr(tmp_path, monkeypatch, capsys):
+    import importlib.abc
+    import importlib.util
+
+    s = _settings(tmp_path, n_images=1, num_variants=1, use_vlm=False)
+    p = s.output_dir / "run_settings.json"
+    save_settings(s, p)
+
+    src = tmp_path / "fake_models_src.py"
+    src.write_text(
+        "from tests.bg_fakes import FakeFactory\n"
+        "print('noise-import')\n"
+        "def preflight(settings):\n"
+        "    print('noise-preflight')\n"
+        "    return []\n"
+        "def HFModelFactory(settings, class_names):\n"
+        "    print('noise-factory')\n"
+        "    return FakeFactory.default()\n", encoding="utf-8")
+
+    class Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path, target=None):
+            if fullname == "background_swap.models":
+                return importlib.util.spec_from_file_location(fullname, src)
+            return None
+
+    monkeypatch.delitem(sys.modules, "background_swap.models", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [Finder(), *sys.meta_path])
+    assert main(["run", "--settings", str(p)]) == 0    # stream=None -> 실제 sys.stdout
+    out, err = capsys.readouterr()
+    for line in out.splitlines():
+        json.loads(line)                                # stdout은 JSON Lines만
+    assert "noise" not in out
+    for marker in ("noise-import", "noise-preflight", "noise-factory"):
+        assert marker in err
+
+
+def test_progress_reaches_real_stdout_under_redirect(tmp_path, capsys):
+    s = _settings(tmp_path, n_images=1, num_variants=1, use_vlm=False)
+    p = s.output_dir / "run_settings.json"
+    save_settings(s, p)
+    assert main(["run", "--settings", str(p)], lambda s, c: FakeFactory.default()) == 0
+    out, _ = capsys.readouterr()
+    ev = [json.loads(line) for line in out.splitlines()]
+    assert any(e.get("stage") == "inpaint" for e in ev)
+    assert ev[-1] == {"event": "done"}
