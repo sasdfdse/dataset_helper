@@ -37,7 +37,7 @@ class TextDetector(Protocol):
 
 def _clip_slices(left: float, top: float, right: float, bottom: float,
                  w: int, h: int) -> tuple[int, int, int, int] | None:
-    # 부동소수 오차(45.00000000000001 등)로 ceil/floor가 어긋나지 않도록 반올림 후 처리
+    # round first so float error (e.g. 45.00000000000001) doesn't shift ceil/floor
     x1 = max(0, math.floor(round(left, 6)))
     y1 = max(0, math.floor(round(top, 6)))
     x2 = min(w, math.ceil(round(right, 6)))
@@ -161,7 +161,6 @@ def build_mask_set(img_bgr: np.ndarray, boxes: list[BBox],
     h, w = img_bgr.shape[:2]
     rgb = _bgr_to_rgb(img_bgr)
 
-    # SAM은 needs_sam 박스가 있을 때만 한 번에 호출
     sam_masks: list[np.ndarray | None] = [None] * len(boxes)
     sam_idx = [i for i, b in enumerate(boxes)
                if needs_sam(b, w, h, settings.small_box_px)

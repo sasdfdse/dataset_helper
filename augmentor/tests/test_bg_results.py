@@ -8,6 +8,7 @@ from background_swap.stages.composite import diff_image, draw_boxes
 from core.label import read_labels
 from background_swap.common.store import imwrite_atomic, write_mask
 from gui.background_results import (DIFF_JPEG_NOTE, build_result_list, describe_record, format_export_message,
+                                    format_translations,
                                     format_report, index_originals, load_panels, load_report,
                                     originals_from_items,
                                     result_image_path)
@@ -21,7 +22,7 @@ def make_output(tmp_path, with_files=True, with_items=True):
     for d in (images, labels):
         d.mkdir()
     rng = np.random.default_rng(0)
-    orig = rng.integers(0, 256, (H, W, 3), dtype=np.uint8)      # 질감 있는 원본 (JPEG 오차가 드러나게)
+    orig = rng.integers(0, 256, (H, W, 3), dtype=np.uint8)      # textured source (so JPEG error shows)
     cv2.imwrite(str(images / "a.png"), orig)
     (labels / "a.txt").write_text("0 0.5 0.5 0.4 0.4\n")
     core = np.zeros((H, W), bool)
@@ -33,13 +34,13 @@ def make_output(tmp_path, with_files=True, with_items=True):
     for name, m in (("object_core", core), ("object_protect", protect), ("keep", keep),
                     ("inpaint", ~protect)):
         write_mask(out / "masks" / f"a_{name}.png", m)
-    acc = orig.copy()                                  # 보호 영역은 원본 그대로, 바깥은 새 배경
+    acc = orig.copy()                                  # protected area as source, new background outside
     acc[~(protect | keep)] = rng.integers(0, 256, (int((~(protect | keep)).sum()), 3), dtype=np.uint8)
     rej = acc.copy()
-    rej[12:16, 22:26] = (rej[12:16, 22:26].astype(np.int16) + 128).astype(np.uint8)   # 보호 영역 내부 변경
+    rej[12:16, 22:26] = (rej[12:16, 22:26].astype(np.int16) + 128).astype(np.uint8)   # change inside the protected area
     for name, img in (("a_bgswap1_a1", acc), ("a_bgswap2_a1", rej)):
         (out / "generated").mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(out / "generated" / f"{name}.png"), img)      # 무손실 생성 결과
+        cv2.imwrite(str(out / "generated" / f"{name}.png"), img)      # lossless generated result
     imwrite_atomic(out / "Accepted" / "images" / "a_bgswap1.jpg", acc, 95)
     imwrite_atomic(out / "Rejected" / "a_bgswap2_a1.jpg", rej, 95)
     recs = [
@@ -59,7 +60,7 @@ def make_output(tmp_path, with_files=True, with_items=True):
     ]
     out.mkdir(exist_ok=True)
     (out / "Manifest.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
-    if with_items:      # 실행이 Stage 0에서 쓰는 입력 목록
+    if with_items:      # input list the run writes in Stage 0
         (out / "items.jsonl").write_text(json.dumps(
             {"stem": "a", "image_path": str(images / "a.png"), "label_path": str(labels / "a.txt"),
              "width": W, "height": H}) + "\n")
@@ -124,7 +125,7 @@ def test_load_panels_accepted_has_no_red_in_diff(tmp_path):
         assert img.shape == (H, W, 3) and img.dtype == np.uint8
     red = np.all(p.diff == (0, 0, 255), axis=2)
     assert not red.any() and p.diff_note == ""
-    assert p.diff[35, 5].max() > 0          # 바깥은 변경됨 (회색 차이)
+    assert p.diff[35, 5].max() > 0          # outside changed (grey diff)
     assert not np.array_equal(p.overlay, p.orig)
 
 
@@ -151,9 +152,9 @@ def test_describe_record():
                                        "vlm": {"natural_indoor_venue": False, "reason": "dark"}},
                             "scene": {"venue": "gym", "light": "dim"}, "prompt": "a gym"})
     assert "protected_changed, vlm_unnatural" in text
-    assert "venue=gym" in text and "light=dim" in text
+    assert "배경 조합: 장소=gym" in text and "light=dim" in text
     assert "a gym" in text and "mean_change" in text and "dark" in text
-    # 누락/None 필드에도 예외 없음
+    # no exception on missing/None fields
     assert describe_record({"status": "accepted", "checks": None, "scene": None, "reasons": None})
 
 
@@ -167,14 +168,15 @@ def test_format_report_and_load_report(tmp_path):
               "stage_seconds": {"masks": 1.5},
               "note": "GDINO 미검출은 새 객체가 없다는 뜻이 아닙니다."}
     text = format_report(report)
-    for needle in ("accepted", "protected_changed", "venue", "gym", "ball", "50.0%", "n/a",
+    assert "[배경 조합: 장소 — 전체]" in format_report(report)
+    for needle in ("accepted", "protected_changed", "장소", "gym", "ball", "50.0%", "n/a",
                    "GDINO 미검출은 새 객체가 없다는 뜻이 아닙니다.", "masks"):
         assert needle in text
     assert "평균 생성 시간" not in text
     assert "평균 생성 시간" not in format_report({**report, "avg_seconds_per_generation": None})
     text = format_report({**report, "avg_seconds_per_generation": 2.5})
     assert "[이미지당 평균 생성 시간]" in text and "2.50초" in text
-    assert format_report({})        # 빈 리포트도 예외 없음
+    assert format_report({})        # an empty report doesn't raise
     assert load_report(tmp_path) is None
     (tmp_path / "report.json").write_text(json.dumps(report))
     assert load_report(tmp_path) == report
@@ -204,13 +206,13 @@ def test_diff_uses_lossless_generated_png(tmp_path):
     items = index_originals(images, labels)
     orig = cv2.imread(str(images / "a.png"))
     protect = _protect(out)
-    # 질감 이미지에서 JPEG q95 결과와 직접 비교하면 보호 영역이 빨갛게 나온다 (이 테스트가 민감한지 확인)
+    # on a textured image, diffing against the JPEG q95 shows red in protected areas (checks this test is sensitive)
     jpeg = cv2.imread(str(rl.entries[0].path))
     assert np.all(diff_image(orig, jpeg, protect) == (0, 0, 255), axis=2)[protect].mean() > 0.5
     p = load_panels(out, rl.entries[0], items["a"])
     red = np.all(p.diff == (0, 0, 255), axis=2)
     assert not red[protect].any() and p.diff_note == ""
-    # 패널 3(결과)은 계속 JPEG 결과 파일
+    # panel 3 (result) is still the JPEG result file
     assert np.array_equal(p.result, jpeg)
 
 
@@ -221,3 +223,28 @@ def test_diff_falls_back_to_jpeg_when_png_missing(tmp_path):
     p = load_panels(out, rl.entries[0], index_originals(images, labels)["a"])
     assert p.diff_note == DIFF_JPEG_NOTE and "JPEG" in p.diff_note
     assert p.diff.shape == (H, W, 3)
+
+
+def test_format_translations_groups_by_kind_and_explains():
+    text = format_translations([
+        {"kind": "scene", "source": "체육관", "text": "gymnasium"},
+        {"kind": "keep", "source": "골대", "text": "goal post"},
+        {"kind": "class", "source": "로봇", "text": "robot"},
+        {"kind": "keep", "source": 3},                     # malformed entries are ignored
+    ])
+    keep, scene, cls = text.index("[유지 항목]"), text.index("[배경 조합]"), text.index("[클래스 이름]")
+    assert keep < scene < cls
+    assert "  골대 → goal post" in text and "  체육관 → gymnasium" in text and "  로봇 → robot" in text
+    assert "영어로 직접" in text
+    assert format_translations([]) == ""
+
+
+def test_format_references_groups_by_axis():
+    from gui.background_results import format_references
+    assert format_references(None) == "" and format_references([{"x": 1}]) == ""
+    text = format_references([{"axis": "lighting", "file": "a.jpg", "text": "warm spotlights"},
+                              {"axis": "camera", "file": "b.jpg", "text": "grainy phone photo"},
+                              {"axis": "lighting", "file": "c.jpg", "text": "cool LED panels"}])
+    assert "[조명]" in text and "[사진 느낌]" in text
+    assert text.index("a.jpg → warm spotlights") < text.index("c.jpg → cool LED panels") < text.index("[사진 느낌]")
+    assert "references.json" in text

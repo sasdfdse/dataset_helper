@@ -10,33 +10,42 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 
 from background_swap.dataset.classes import find_class_names_file
 from background_swap.stages.composite import draw_boxes
 from background_swap.dataset.inputs import collect_items, load_image_bgr
-from background_swap.common.settings import BackgroundSwapSettings, KeepItem, ModelIds
+from background_swap.common.settings import (DEFAULT_SCENE_AXES, MODEL_PRESETS, PRESET_USE_VLM,
+                                             BackgroundSwapSettings, KeepItem, ModelIds, axis_label,
+                                             is_sdxl, model_preset)
+from background_swap.common.estimate import describe_plan, make_plan
+from background_swap.common.hardware import (PROFILE_PATH, HardwareProfile, load_profile, merge_probe,
+                                             save_profile)
 from background_swap.common.store import reset_output_dir
 from core.label import read_labels
 from gui import background_state
-from gui.augment_tab import _PREVIEW_SIZE
 from gui.background_state import (format_axis_values, load_ui_state,
                                   parse_axis_values, quick_mask_preview,
                                   save_ui_state, to_number as _to_number)
 from gui.background_results import (ResultList, build_result_list, describe_record,
                                     index_originals, load_panels, originals_from_items)
+from gui.background_dialogs import ReportWindow
 from gui.background_run import PREVIEW_N, RunMixin
 from gui.keep_item_dialog import KeepItemDialog
+from gui.info_texts import BACKGROUND_INFO
+from gui.placeholder import Placeholder
 from gui.worker_process import WorkerProcess
+from gui import app_prefs, rounded, theme
 
 _PLACEHOLDER = "Preview 실행 후 표시"
 _DEBOUNCE_MS = 150
-_PANEL_BG = "#313244"
+_PANEL_BG = theme.ENTRY
+_PREVIEW_SIZE = (340, 215)  # fits 4 panels plus details in one window
 _MODEL_LABELS = (("segmenter", "Segmenter"), ("detector", "Detector"), ("llm", "LLM"),
                  ("inpainter", "Inpainter"), ("vlm", "VLM"))
 
-# (settings 필드, 형변환, 라벨, spinbox 범위(from, to, increment) 또는 None)
+# (settings field, type, label, spinbox (from, to, increment) or None)
 _DATA_NUM = (("frame_stride", int, "Frame stride", (1, 100, 1)),)
 _GEN_NUM = (
     ("num_variants", int, "Variants (1-20)", (1, 20, 1)),
@@ -56,13 +65,33 @@ _ADV_NUM = (
 _NUM_CASTS = {attr: cast for attr, cast, _, _ in _DATA_NUM + _GEN_NUM + _ADV_NUM}
 _PREVIEW_ATTRS = ("small_box_px", "dilate_px", "shadow_extend_ratio")
 _PATH_ATTRS = ("images_dir", "labels_dir", "output_dir", "class_names_file")
+_IMAGE_TYPES = [("이미지", "*.jpg *.jpeg *.png *.bmp *.webp *.JPG *.JPEG *.PNG"), ("모든 파일", "*")]
+FAST_MODE_LABEL = "빠른 모드 (약 2.7배 빠름)"
+# numeric fields that trigger re-estimation (frame_stride re-estimates via the preview refresh)
+_ESTIMATE_ATTRS = ("num_variants", "max_attempts", "max_resolution_px", "manual_resolution_px")
 
+
+
+
+class _AxisRow:
+    """배경 조합 항목 한 줄: 체크박스(사용 여부) + 참고 사진 버튼(선택) + 후보 값 칸."""
+
+    def __init__(self, name: str, values: tk.StringVar, enabled: tk.BooleanVar,
+                 refs: Optional[list[Path]] = None) -> None:
+        self.name, self.values, self.enabled = name, values, enabled
+        self.refs: list[Path] = list(refs or [])
+        self.check: Optional[ttk.Checkbutton] = None
+        self.entry: Optional[ttk.Entry] = None
+        self.placeholder: Optional[Placeholder] = None
+        self.ref_btn: Optional[ttk.Button] = None
+        self.ref_clear: Optional[ttk.Button] = None
+        self.widgets: list[tk.Misc] = []
 
 class BackgroundTab(RunMixin, ttk.Frame):
     def __init__(self, parent, state_path: Optional[Path] = None):
         super().__init__(parent)
         self._state_path = state_path
-        self._last = BackgroundSwapSettings()      # 마지막으로 유효했던 값 (잘못된 입력 폴백)
+        self._last = BackgroundSwapSettings()      # last valid values (fallback for invalid input)
         self._keep_items: list[KeepItem] = []
         self._items = []                           # list[ImageItem]
         self._items_key = None
@@ -70,29 +99,36 @@ class BackgroundTab(RunMixin, ttk.Frame):
         self._cur_img: Optional[np.ndarray] = None
         self._after_id: Optional[str] = None
         self._pick: Optional[tuple[Callable, Callable]] = None
-        self._axis_rows: list[tuple[str, tk.StringVar, ttk.Label, ttk.Entry]] = []
-        self._axis_sel: Optional[str] = None
+        self._axis_rows: list[_AxisRow] = []
         self._vars: dict[str, tk.Variable] = {}
         self._wheel_widgets: list[tk.Misc] = []
         self._worker: Optional[WorkerProcess] = None
-        self._job: dict = {}                       # 실행 중 작업 정보 (mode/out/stopping/error/done)
+        self._job: dict = {}                       # running job info (mode/out/stopping/error/done)
         self._results: Optional[ResultList] = None
         self._result_dir: Optional[Path] = None
         self._orig_index: dict = {}
         self._ridx = 0
         self._results_mode = False
+        self._estimate_after: Optional[str] = None
+        self._last_job_note = ""
+        # GPU profile: start from the saved value; start_hardware_probe() re-measures
+        self._hw_path = self._state_file().parent / PROFILE_PATH.name
+        self._hw = load_profile(self._hw_path)
+        self._probe: Optional[WorkerProcess] = None
+        rounded.install(self.winfo_toplevel())
         self._build_ui()
         try:
             self.apply_settings(load_ui_state(self._state_file()))
         except Exception:
-            # 타입이 잘못된 상태 파일: 기본값으로 시작 (종료 시 정상 상태로 덮어쓴다)
+            # state file with wrong types: start from defaults (overwritten with a valid state on exit)
             self._keep_items = []
             self.apply_settings(BackgroundSwapSettings())
+            self.refresh_preview_now()  # flush the pending refresh so it doesn't overwrite the notice below
             self._status_lbl.configure(text="저장된 UI 상태를 읽을 수 없어 기본값으로 시작했습니다")
         self.bind("<Destroy>", self._on_destroy)
         self.winfo_toplevel().bind("<Escape>", self._cancel_pick, add="+")
 
-    # 시험/교체용 이음매 (RunMixin이 사용)
+    # seam for tests (used by RunMixin)
     def _make_worker(self, args, on_event, on_exit) -> WorkerProcess:
         return WorkerProcess(args, on_event, on_exit)
 
@@ -101,8 +137,6 @@ class BackgroundTab(RunMixin, ttk.Frame):
 
     def _state_file(self) -> Path:
         return self._state_path or background_state.UI_STATE_PATH
-
-    # ── Layout ──────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         self.columnconfigure(0, weight=0, minsize=280)
@@ -117,7 +151,7 @@ class BackgroundTab(RunMixin, ttk.Frame):
         outer.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
 
-        canvas = tk.Canvas(outer, borderwidth=0, highlightthickness=0, width=300, bg="#1e1e2e")
+        canvas = tk.Canvas(outer, borderwidth=0, highlightthickness=0, width=300, bg=theme.BG)
         scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.grid(row=0, column=0, sticky="nsew")
@@ -148,6 +182,8 @@ class BackgroundTab(RunMixin, ttk.Frame):
                     width=9).grid(row=row, column=1, sticky="w", pady=1)
         if attr in _PREVIEW_ATTRS or attr == "frame_stride":
             var.trace_add("write", lambda *a: self._schedule_refresh())
+        if attr in _ESTIMATE_ATTRS:
+            var.trace_add("write", lambda *a: self._schedule_estimate())
 
     def _path_row(self, parent, row: int, attr: str, label: str, browse) -> None:
         var = tk.StringVar()
@@ -189,7 +225,7 @@ class BackgroundTab(RunMixin, ttk.Frame):
         self._keep_tree = tree
         for c, (text, cmd) in enumerate((("추가", self._add_keep), ("편집", self._edit_keep),
                                          ("삭제", self._delete_keep))):
-            ttk.Button(g, text=text, command=cmd, width=6).grid(row=1, column=c, pady=(4, 0))
+            ttk.Button(g, text=text, command=cmd, width=6).grid(row=1, column=c, padx=2, pady=(4, 0))
         return g
 
     def _build_gen_group(self, parent) -> ttk.LabelFrame:
@@ -198,20 +234,39 @@ class BackgroundTab(RunMixin, ttk.Frame):
             self._num_row(g, r, attr, label, rng)
         self._vars["use_llm"] = tk.BooleanVar()
         self._vars["use_vlm"] = tk.BooleanVar()
-        ttk.Checkbutton(g, text="Use LLM (장면 프롬프트 생성)", variable=self._vars["use_llm"]).grid(
+        ttk.Checkbutton(g, text="Use LLM (배경 문장 생성)", variable=self._vars["use_llm"]).grid(
             row=3, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(g, text="Use VLM (결과 검수)", variable=self._vars["use_vlm"]).grid(
             row=4, column=0, columnspan=2, sticky="w")
+        self._vars["fast_mode"] = tk.BooleanVar()
+        self._fast_check = ttk.Checkbutton(g, text=FAST_MODE_LABEL, variable=self._vars["fast_mode"])
+        self._fast_check.grid(row=5, column=0, columnspan=2, sticky="w")
+        # picking a size also updates the model names and VLM setting in advanced settings
+        size = ttk.Frame(g)
+        size.grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Label(size, text="모델:").grid(row=0, column=0, sticky="nw")
+        self._preset_var = tk.StringVar(value="large")
+        for r, (key, text) in enumerate((("large", "Large (고품질)"), ("small", "Small (저사양 PC용)"))):
+            ttk.Radiobutton(size, text=text, value=key, variable=self._preset_var,
+                            command=lambda k=key: self._apply_preset(k)).grid(row=r, column=1, sticky="w",
+                                                                              padx=(6, 0))
+        self._preset_note = ttk.Label(g, text="", foreground=theme.FG_DIM, wraplength=230, justify="left")
+        self._preset_note.grid(row=7, column=0, columnspan=2, sticky="w")
+        for key in ("use_llm", "use_vlm", "fast_mode"):
+            self._vars[key].trace_add("write", lambda *a: self._schedule_estimate())
         return g
 
     def _build_axes_group(self, parent) -> ttk.LabelFrame:
-        g = ttk.LabelFrame(parent, text="장면 축 (값은 ; 로 구분)", padding=4)
+        g = ttk.LabelFrame(parent, text="배경 조합 (체크한 항목만 사용)", padding=4)
         g.columnconfigure(0, weight=1)
+        hint = ttk.Label(g, text="새 배경마다 항목별로 후보 하나를 무작위로 골라 조합한다. "
+                         "후보는 ; 로 구분. 비워 두면 회색 예시 값을 쓴다. "
+                         "📷 사진: 참고 사진(선택)을 고르면 그 항목의 후보에 사진 설명이 더해진다.",
+                         foreground=theme.FG_DIM, wraplength=230, justify="left")
+        hint.grid(row=0, column=0, sticky="w", pady=(0, 4))
         self._axes_body = ttk.Frame(g)
-        self._axes_body.grid(row=0, column=0, columnspan=2, sticky="ew")
+        self._axes_body.grid(row=1, column=0, sticky="ew")
         self._axes_body.columnconfigure(0, weight=1)
-        ttk.Button(g, text="축 추가", command=self._add_axis).grid(row=1, column=0, pady=(4, 0))
-        ttk.Button(g, text="축 삭제", command=self._delete_axis).grid(row=1, column=1, pady=(4, 0))
         return g
 
     def _build_advanced(self, parent) -> ttk.Frame:
@@ -224,6 +279,7 @@ class BackgroundTab(RunMixin, ttk.Frame):
         self._adv_frame.columnconfigure(1, weight=1)
         g = self._adv_frame
         self._vars["resolution_mode"] = tk.StringVar()
+        self._vars["resolution_mode"].trace_add("write", lambda *a: self._schedule_estimate())
         ttk.Label(g, text="resolution_mode:").grid(row=0, column=0, sticky="w", pady=1)
         ttk.Combobox(g, textvariable=self._vars["resolution_mode"], values=("auto", "manual"),
                      state="readonly", width=8).grid(row=0, column=1, sticky="w", pady=1)
@@ -233,9 +289,10 @@ class BackgroundTab(RunMixin, ttk.Frame):
         for r, (key, label) in enumerate(_MODEL_LABELS, r0):
             var = tk.StringVar()
             self._vars[f"model_{key}"] = var
+            var.trace_add("write", lambda *a: self._sync_preset())
             ttk.Label(g, text=f"{label}:").grid(row=r, column=0, sticky="w", pady=1)
             ttk.Entry(g, textvariable=var, width=24).grid(row=r, column=1, sticky="ew", pady=1)
-        self._adv_frame.grid_remove()      # 기본 접힘
+        self._adv_frame.grid_remove()
         self._adv_open = False
         return wrap
 
@@ -269,11 +326,11 @@ class BackgroundTab(RunMixin, ttk.Frame):
             tl = ttk.Label(cell, text=title)
             tl.pack()
             self._titles.append((tl, title))
-            holder = tk.Frame(cell, width=_PREVIEW_SIZE[0], height=_PREVIEW_SIZE[1], bg=_PANEL_BG)
+            holder = tk.Frame(cell, width=_PREVIEW_SIZE[0], height=_PREVIEW_SIZE[1], bg=theme.BG)
             holder.pack()
             holder.pack_propagate(False)
-            lbl = ttk.Label(holder, background=_PANEL_BG, text=_PLACEHOLDER, anchor="center")
-            lbl.pack(expand=True)
+            lbl = ttk.Label(holder, style=rounded.PANEL_STYLE, text=_PLACEHOLDER, anchor="center")
+            lbl.pack(fill=tk.BOTH, expand=True)
             lbl.image = None
             labels.append(lbl)
         self._orig_lbl, self._mask_lbl, self._result_lbl, self._diff_lbl = labels
@@ -314,6 +371,98 @@ class BackgroundTab(RunMixin, ttk.Frame):
         self._stage_lbl.grid(row=0, column=0, sticky="w")
         self._progress = ttk.Progressbar(prog, mode="determinate", maximum=1, value=0)
         self._progress.grid(row=0, column=1, sticky="ew")
+        bottom = ttk.Frame(frame)
+        bottom.grid(row=6, column=0, sticky="ew", pady=(4, 0))
+        bottom.columnconfigure(0, weight=1)
+        self._eta_lbl = ttk.Label(bottom, text="", foreground=theme.FG_DIM,
+                                  wraplength=2 * _PREVIEW_SIZE[0] - 60, justify="left")
+        self._eta_lbl.grid(row=0, column=0, sticky="w")
+        self._info_btn = ttk.Button(bottom, text="ⓘ Info", width=7, command=self._on_info)
+        self._info_btn.grid(row=0, column=1, sticky="e", padx=(6, 0))
+
+    def _schedule_estimate(self) -> None:
+        if self._estimate_after is not None:
+            try:
+                self.after_cancel(self._estimate_after)
+            except tk.TclError:
+                pass
+        self._estimate_after = self.after(_DEBOUNCE_MS, self._update_estimate)
+
+    def _update_estimate(self) -> None:
+        """실행 전 예상 시간. 실행 중에는 진행 이벤트가 남은 시간을 표시하므로 건드리지 않는다."""
+        self._estimate_after = None
+        if self.is_running():
+            return
+        self._reload_items()
+        s = self.build_settings()
+        size = (self._items[0].width, self._items[0].height) if self._items else None
+        text = describe_plan(make_plan(s, len(self._items), size, self._hw), s)
+        if self._last_job_note:
+            text += "\n" + self._last_job_note
+        self._eta_lbl.configure(text=text)
+
+    def _current_models(self) -> ModelIds:
+        return ModelIds(**{k: self._vars[f"model_{k}"].get().strip() for k, _ in _MODEL_LABELS})
+
+    def _apply_preset(self, name: str) -> None:
+        """Small/Large: 모델 이름과 VLM 사용 여부를 프리셋 값으로 바꾼다 (Small은 빠른 모드도 끈다)."""
+        preset = MODEL_PRESETS[name]
+        for key, _ in _MODEL_LABELS:
+            self._vars[f"model_{key}"].set(getattr(preset, key))
+        self._vars["use_vlm"].set(PRESET_USE_VLM[name])
+        if name == "small":
+            self._vars["fast_mode"].set(False)
+        self._sync_preset()
+
+    def _sync_preset(self) -> None:
+        """모델 이름 칸에 맞춰 Small/Large 표시와 빠른 모드 사용 가능 여부를 갱신한다."""
+        if not hasattr(self, "_preset_var"):
+            return
+        name = model_preset(self._current_models())
+        self._preset_var.set(name if name != "custom" else "")
+        sdxl = is_sdxl(self._vars["model_inpainter"].get())
+        self._fast_check.state(["!disabled"] if sdxl else ["disabled"])
+        self._preset_note.configure(text={
+            "large": "Large: SDXL 인페인팅, 8GB GPU 기준. make venv 설치.",
+            "small": "Small: SD1.5 인페인팅(512px), 작은 LLM, VLM 검수 끔. 4GB급 GPU에서도 동작. "
+                     "make venv-small 설치로도 충분.",
+            "custom": "모델: 고급 설정에서 직접 지정함",
+        }[name])
+        self._schedule_estimate()
+
+    def _on_info(self) -> None:
+        text = BACKGROUND_INFO + f"\n[이 PC]\n• {self._hw.describe()}\n"
+        ReportWindow(self, text, title="Info — Background Swap", size="680x760")
+
+    def start_hardware_probe(self) -> None:
+        """앱 시작 때 한 번: 워커로 GPU 이름/VRAM/속도를 재서 이 PC에 맞춘다 (1~3초, 백그라운드)."""
+        if self._probe is not None:
+            return
+        self._probe = self._make_worker(
+            ["probe"], lambda ev: self._post(self._on_probe_event, ev),
+            lambda code, err: self._post(self._on_probe_exit))
+        try:
+            self._probe.start()
+        except OSError:
+            self._probe = None
+
+    def _on_probe_event(self, ev: dict) -> None:
+        if ev.get("event") != "done":
+            return
+        gpu = ev.get("gpu")
+        if not isinstance(gpu, str) or not gpu:
+            self._hw = HardwareProfile()       # no CUDA GPU: use reference values
+        else:
+            try:
+                self._hw = merge_probe(self._hw_path, gpu, float(ev.get("vram_gb") or 0),
+                                       float(ev.get("tflops") or 0))
+                save_profile(self._hw, self._hw_path)
+            except (OSError, TypeError, ValueError):
+                pass
+        self._schedule_estimate()
+
+    def _on_probe_exit(self) -> None:
+        self._probe = None
 
     def _bind_wheel(self, widget) -> None:
         def scroll(delta):
@@ -328,8 +477,6 @@ class BackgroundTab(RunMixin, ttk.Frame):
         for child in widget.winfo_children():
             self._bind_wheel(child)
 
-    # ── Settings <-> widgets ─────────────────────────────────────────
-
     def _num(self, attr: str, fallback):
         v = _to_number(self._vars[attr].get(), _NUM_CASTS[attr])
         return fallback if v is None else v
@@ -343,14 +490,21 @@ class BackgroundTab(RunMixin, ttk.Frame):
             kw[attr] = Path(text) if text else None
         kw["use_llm"] = bool(self._vars["use_llm"].get())
         kw["use_vlm"] = bool(self._vars["use_vlm"].get())
+        kw["fast_mode"] = bool(self._vars["fast_mode"].get())
         mode = self._vars["resolution_mode"].get()
         kw["resolution_mode"] = mode if mode in ("auto", "manual") else prev.resolution_mode
         kw["models"] = ModelIds(**{
             k: self._vars[f"model_{k}"].get().strip() or getattr(prev.models, k)
             for k, _ in _MODEL_LABELS})
         kw["keep_items"] = copy.deepcopy(self._keep_items)
-        kw["scene_axes"] = {name: parse_axis_values(var.get()) for name, var, _, _ in self._axis_rows}
-        kw["allow_non_train"] = prev.allow_non_train      # UI 노출 없음: 실행별 확인 다이얼로그로만 설정
+        # empty field = the greyed-out example values;
+        # with reference photos, an empty field uses only the photo captions (added at run time)
+        kw["scene_axes"] = {row.name: parse_axis_values(row.values.get())
+                            or ([] if row.refs else list(DEFAULT_SCENE_AXES.get(row.name, [])))
+                            for row in self._axis_rows}
+        kw["reference_images"] = {row.name: list(row.refs) for row in self._axis_rows if row.refs}
+        kw["disabled_scene_axes"] = [row.name for row in self._axis_rows if not row.enabled.get()]
+        kw["allow_non_train"] = prev.allow_non_train      # not in the UI; set only through the per-run confirmation dialog
         self._last = BackgroundSwapSettings(**kw)
         return copy.deepcopy(self._last)
 
@@ -364,18 +518,19 @@ class BackgroundTab(RunMixin, ttk.Frame):
             self._vars[attr].set(str(getattr(s, attr)))
         self._vars["use_llm"].set(s.use_llm)
         self._vars["use_vlm"].set(s.use_vlm)
+        self._vars["fast_mode"].set(s.fast_mode)
         self._vars["resolution_mode"].set(s.resolution_mode)
         for key, _ in _MODEL_LABELS:
             self._vars[f"model_{key}"].set(getattr(s.models, key))
         self._keep_items = copy.deepcopy(s.keep_items)
         self._refresh_keep_tree()
-        self._rebuild_axes(s.scene_axes)
+        self._rebuild_axes(s.scene_axes, s.disabled_scene_axes, s.reference_images)
         self._on_dirs_changed()
-
-    # ── Folder browsing ──────────────────────────────────────────────
+        self._schedule_estimate()
 
     def _browse_dir(self, attr: str) -> None:
-        path = filedialog.askdirectory(title=f"Select {attr}")
+        path = app_prefs.ask_directory(f"Select {attr}", self._vars[attr].get()
+                                       or self._vars["images_dir"].get())
         if not path:
             return
         self._vars[attr].set(path)
@@ -386,8 +541,8 @@ class BackgroundTab(RunMixin, ttk.Frame):
             self._on_output_changed()
 
     def _browse_classes(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Select class names file",
+        path = app_prefs.ask_open_file(
+            "Select class names file", self._vars["class_names_file"].get() or self._vars["labels_dir"].get(),
             filetypes=[("Class names", "*.txt *.yaml *.yml *.names"), ("All files", "*.*")])
         if path:
             self._vars["class_names_file"].set(path)
@@ -413,8 +568,6 @@ class BackgroundTab(RunMixin, ttk.Frame):
             return
         if (Path(text) / "Manifest.jsonl").is_file():
             self.load_results(Path(text))
-
-    # ── Keep items ───────────────────────────────────────────────────
 
     def _refresh_keep_tree(self) -> None:
         self._keep_tree.delete(*self._keep_tree.get_children())
@@ -457,52 +610,69 @@ class BackgroundTab(RunMixin, ttk.Frame):
         self._refresh_keep_tree()
         self._schedule_refresh()
 
-    # ── Scene axes ───────────────────────────────────────────────────
-
-    def _rebuild_axes(self, axes: dict[str, list[str]]) -> None:
-        for _, _, lbl, ent in self._axis_rows:
-            lbl.destroy()
-            ent.destroy()
-        self._axis_rows, self._axis_sel = [], None
+    def _rebuild_axes(self, axes: dict[str, list[str]], disabled: list[str],
+                      refs: Optional[dict[str, list[Path]]] = None) -> None:
+        for row in self._axis_rows:
+            for w in row.widgets:
+                w.destroy()
+        self._axis_rows = []
         for name, values in axes.items():
-            self._append_axis_row(name, format_axis_values(values))
+            self._append_axis_row(name, values, name not in disabled, (refs or {}).get(name, []))
 
-    def _append_axis_row(self, name: str, text: str) -> None:
+    def _append_axis_row(self, name: str, values: list[str], enabled: bool,
+                         refs: Optional[list[Path]] = None) -> None:
         r = len(self._axis_rows)
-        var = tk.StringVar(value=text)
-        lbl = ttk.Label(self._axes_body, text=f"{name}:")
-        lbl.grid(row=2 * r, column=0, sticky="w")
-        ent = ttk.Entry(self._axes_body, textvariable=var, width=26)
-        ent.grid(row=2 * r + 1, column=0, sticky="ew", pady=(0, 3))
-        ent.bind("<FocusIn>", lambda e, n=name: self._select_axis(n))
-        self._axis_rows.append((name, var, lbl, ent))
-        self._bind_wheel(lbl)
-        self._bind_wheel(ent)
+        example = DEFAULT_SCENE_AXES.get(name, [])
+        # values equal to the example: leave the field empty and show the grey hint (empty = use example)
+        text = "" if example and list(values) == example and not refs else format_axis_values(values)
+        row = _AxisRow(name, tk.StringVar(value=text), tk.BooleanVar(value=enabled), refs)
+        row.check = ttk.Checkbutton(self._axes_body, text=axis_label(name), variable=row.enabled,
+                                    command=lambda: self._sync_axis_row(row))
+        row.check.grid(row=2 * r, column=0, sticky="w")
+        btns = ttk.Frame(self._axes_body)
+        btns.grid(row=2 * r, column=1, sticky="e")
+        row.ref_btn = ttk.Button(btns, width=9, command=lambda: self._pick_refs(row))
+        row.ref_btn.pack(side=tk.LEFT)
+        row.ref_clear = ttk.Button(btns, text="✕", width=2, command=lambda: self._clear_refs(row))
+        row.entry = ttk.Entry(self._axes_body, textvariable=row.values, width=26)
+        row.entry.grid(row=2 * r + 1, column=0, columnspan=2, sticky="ew", pady=(0, 3))
+        row.placeholder = Placeholder(row.entry, row.values, format_axis_values(example))
+        row.widgets = [row.check, btns, row.entry]
+        self._axis_rows.append(row)
+        self._sync_axis_row(row)
+        for w in (row.check, row.entry, btns, row.ref_btn, row.ref_clear):
+            self._bind_wheel(w)
 
-    def _select_axis(self, name: str) -> None:
-        self._axis_sel = name
-        for n, _, lbl, _ in self._axis_rows:
-            lbl.configure(foreground="#7c5cfc" if n == name else "#cdd6f4")
+    def _pick_refs(self, row: "_AxisRow") -> None:
+        files = app_prefs.ask_open_files(
+            f"'{axis_label(row.name)}' 참고 사진 선택 (여러 장 가능)",
+            str(row.refs[0]) if row.refs else "", filetypes=_IMAGE_TYPES)
+        if files:
+            row.refs = [Path(f) for f in files]
+            self._sync_axis_row(row)
+            self._schedule_estimate()
 
-    def _add_axis(self) -> None:
-        name = simpledialog.askstring("축 추가", "축 이름:", parent=self)
-        name = (name or "").strip()
-        if not name:
-            return
-        if any(n == name for n, _, _, _ in self._axis_rows):
-            messagebox.showerror("Error", f"이미 있는 축입니다: {name}", parent=self)
-            return
-        self._append_axis_row(name, "")
+    def _clear_refs(self, row: "_AxisRow") -> None:
+        row.refs = []
+        self._sync_axis_row(row)
+        self._schedule_estimate()
 
-    def _delete_axis(self) -> None:
-        """값 칸을 마지막으로 클릭한 축을 삭제 (선택이 없으면 안내)."""
-        if self._axis_sel is None:
-            messagebox.showinfo("축 삭제", "삭제할 축의 값 칸을 먼저 클릭하세요.", parent=self)
-            return
-        rest = {n: parse_axis_values(v.get()) for n, v, _, _ in self._axis_rows if n != self._axis_sel}
-        self._rebuild_axes(rest)
-
-    # ── Items / preview ──────────────────────────────────────────────
+    @staticmethod
+    def _sync_axis_row(row: "_AxisRow") -> None:
+        """체크를 끈 항목은 값 칸과 사진 버튼을 흐리게(편집 불가) 한다. 값과 사진은 그대로 남는다."""
+        state = ["!disabled"] if row.enabled.get() else ["disabled"]
+        row.entry.state(state)
+        if row.ref_btn is not None:
+            row.ref_btn.configure(text=f"📷 {len(row.refs)}장" if row.refs else "📷 사진")
+            row.ref_btn.state(state)
+            row.ref_clear.state(state)
+            if row.refs:
+                row.ref_clear.pack(side=tk.LEFT, padx=(2, 0))
+            else:
+                row.ref_clear.pack_forget()
+        if row.placeholder is not None:
+            example = format_axis_values(DEFAULT_SCENE_AXES.get(row.name, []))
+            row.placeholder.set_text("비워 두면 참고 사진 설명만 사용" if row.refs else example)
 
     def _reload_items(self) -> None:
         img, lab = (self._vars[k].get().strip() for k in ("images_dir", "labels_dir"))
@@ -551,8 +721,9 @@ class BackgroundTab(RunMixin, ttk.Frame):
 
     def _refresh_preview(self) -> None:
         self._after_id = None
+        self._schedule_estimate()
         if self._results_mode:
-            return          # 결과 탐색 중에는 마스크 미리보기가 패널을 덮어쓰지 않는다
+            return          # while browsing results, don't let the mask preview overwrite the panels
         self._reload_items()
         if not self._items:
             self._show_none("Images/Labels 폴더를 선택하세요 (이미지+라벨 쌍이 없습니다)")
@@ -575,9 +746,7 @@ class BackgroundTab(RunMixin, ttk.Frame):
     def _to_photoimage(self, bgr: np.ndarray) -> ImageTk.PhotoImage:
         pil = Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
         pil = pil.resize(_PREVIEW_SIZE, Image.LANCZOS)
-        return ImageTk.PhotoImage(pil, master=self)
-
-    # ── Click-to-pick ────────────────────────────────────────────────
+        return ImageTk.PhotoImage(rounded.round_corners(pil), master=self)
 
     def begin_pick(self, on_pick: Callable, on_done: Callable) -> None:
         """다음 미리보기 클릭 1회를 on_pick(img_bgr, x, y)로 전달한다 (Esc 로 취소)."""
@@ -609,14 +778,12 @@ class BackgroundTab(RunMixin, ttk.Frame):
         if self._items:
             self._status_lbl.configure(text=self._items[self._idx].image_path.name)
 
-    # ── Results ─────────────────────────────────────────────
-
     def load_results(self, result_dir: Path) -> bool:
         """result_dir(Manifest/Accepted/Rejected/masks)의 결과를 4패널 탐색 모드로 연다."""
         rl = build_result_list(result_dir)
         self._results, self._result_dir, self._ridx = rl, Path(result_dir), 0
-        # 원본은 그 결과를 만든 실행의 items.jsonl 기준 (현재 위젯 폴더는 다른 데이터셋일 수 있다).
-        # items.jsonl이 없는 폴더에서만 현재 Images/Labels 폴더로 대체한다.
+        # Originals come from that run's items.jsonl (the folder fields may point at another dataset).
+        # Only fall back to the current Images/Labels folders when items.jsonl is missing.
         try:
             index = originals_from_items(Path(result_dir))
         except Exception:
@@ -671,7 +838,7 @@ class BackgroundTab(RunMixin, ttk.Frame):
             if item is None:
                 raise FileNotFoundError("원본 이미지를 찾을 수 없습니다 (Images/Labels 폴더를 확인하세요)")
             p = load_panels(self._result_dir, e, item)
-        except Exception as ex:      # 파일 없음/손상: 패널에 사유만 표시
+        except Exception as ex:
             for lbl in (self._orig_lbl, self._mask_lbl, self._result_lbl, self._diff_lbl):
                 self._set_panel(lbl, None, str(ex)[:80])
             self._set_diff_title("")
@@ -681,19 +848,19 @@ class BackgroundTab(RunMixin, ttk.Frame):
                          (self._result_lbl, p.result), (self._diff_lbl, p.diff)):
             self._set_panel(lbl, img)
 
-    # ── Lifecycle ────────────────────────────────────────────────────
-
     def _on_destroy(self, event) -> None:
         if event.widget is not self:
             return
-        if self._worker is not None:
-            self._worker.stop()
-        if self._after_id is not None:
-            try:
-                self.after_cancel(self._after_id)
-            except tk.TclError:
-                pass
-            self._after_id = None
+        for proc in (self._worker, self._probe):
+            if proc is not None:
+                proc.stop()
+        for attr in ("_after_id", "_estimate_after"):
+            if getattr(self, attr) is not None:
+                try:
+                    self.after_cancel(getattr(self, attr))
+                except tk.TclError:
+                    pass
+                setattr(self, attr, None)
         try:
             save_ui_state(self.build_settings(), self._state_file())
         except Exception:

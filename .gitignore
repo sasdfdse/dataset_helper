@@ -6,14 +6,8 @@ __pycache__/
 # pytest
 .pytest_cache/
 
-# C++ build
-*.o
-*.moc
-moc_predefs.h
-
-# Qt build
-*.qmake.stash
-Makefile_qt
-
 # virtualenv
 .venv/
+
+docs/
+.superpowers/

@@ -1,0 +1,9 @@
+# Background Swap deps, Small preset (SD1.5 inpainting, Qwen2.5-1.5B, SAM2.1-tiny, no VLM).
+# torch is not installed here; install the build matching your CUDA (e.g. torch 2.13+cu130).
+# No bitsandbytes/peft, so models load in fp16 and fast mode is unavailable.
+transformers>=5.22
+diffusers>=0.42
+accelerate
+huggingface_hub
+safetensors
+brotli>=1.2  # huggingface_hub 2.x (httpx2) downloads fail with the older system brotli (1.1.0)

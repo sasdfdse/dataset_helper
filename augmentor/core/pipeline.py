@@ -17,7 +17,6 @@ from core.augment import (
 
 @dataclass
 class AugConfig:
-    # existing
     brightness_enabled: bool = False
     brightness_min: int = -50
     brightness_max: int = 50
@@ -31,7 +30,6 @@ class AugConfig:
     cutmix_enabled: bool = False
     cutmix_pairs: int = 10
     multiplier: int = 3
-    # new
     flip_h_enabled: bool = False
     flip_v_enabled: bool = False
     rotation_enabled: bool = False

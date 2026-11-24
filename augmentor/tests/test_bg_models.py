@@ -6,6 +6,7 @@ torch/transformers/diffusers가 없는 환경(시스템 python3)에서는 건너
 """
 import importlib
 import sys
+import types
 
 import pytest
 
@@ -18,9 +19,9 @@ def M(monkeypatch):
     pytest.importorskip("torch")
     pytest.importorskip("transformers")
     pytest.importorskip("diffusers")
-    # 다른 테스트(test_bg_cli)가 sys.modules["background_swap.models"]에 가짜 모듈을 넣고 남길 수
-    # 있으므로 항목을 지우고 실제 모듈을 새로 import한다 (teardown에서 이전 상태로 복원됨).
-    # 구현/monkeypatch 대상은 background_swap.models.hf (팩토리가 그 모듈 전역에서 클래스를 조회).
+    # test_bg_cli may leave a fake module in sys.modules["background_swap.models"], so drop it
+    # and import the real module fresh (monkeypatch restores the old state on teardown).
+    # Implementations and patch targets live in background_swap.models.hf (the factory looks classes up there).
     monkeypatch.delitem(sys.modules, "background_swap.models", raising=False)
     monkeypatch.delitem(sys.modules, "background_swap.models.hf", raising=False)
     return importlib.import_module("background_swap.models.hf")
@@ -40,8 +41,6 @@ def _flaky(M, fails: int):
         return "ok"
     return fn, calls
 
-
-# ── oom_retry ──────────────────────────────────────────────────────
 
 def test_oom_retry_returns_without_retry_on_success(M):
     fn, calls = _flaky(M, 0)
@@ -73,8 +72,6 @@ def test_oom_retry_does_not_retry_other_errors(M):
     assert len(calls) == 1
 
 
-# ── match_phrase ───────────────────────────────────────────────────
-
 def test_match_phrase_exact_case_insensitive(M):
     assert M.match_phrase("Red Box", ["robot", "red box"]) == "red box"
     assert M.match_phrase("robot.", ["Robot", "box"]) == "Robot"
@@ -89,8 +86,6 @@ def test_match_phrase_falls_back_to_first(M):
     assert M.match_phrase("zebra", ["box", "floor"]) == "box"
     assert M.match_phrase("", ["box", "floor"]) == "box"
 
-
-# ── 팩토리: 로드 중 OOM ────────────────────────────────────────────
 
 class _Fake:
     """생성자가 앞의 fails번은 OOM을 던지는 가짜 래퍼. 생성/close 기록은 클래스 공유 log에."""
@@ -114,6 +109,8 @@ class _Fake:
 
 _CONTEXTS = [
     ("prompt_model", "HFPromptGenerator"),
+    ("translator", "HFPromptGenerator"),
+    ("describer", "HFValidator"),
     ("inpainter", "HFInpainter"),
     ("detector", "HFTextDetector"),
     ("validator", "HFValidator"),
@@ -204,4 +201,41 @@ def test_preflight_skips_disabled_models(M, monkeypatch, use_llm, use_vlm):
     expected = ["t/seg", "t/det"] + (["t/llm"] if use_llm else []) + ["t/inp"] \
         + (["t/vlm"] if use_vlm else [])
     assert checked == expected
-    assert len(problems) == len(expected)   # 점검한 모델만 (오프라인) 문제로 보고
+    assert len(problems) == len(expected)   # only checked models are reported (offline)
+
+
+def test_preflight_checks_fast_lora_only_in_fast_mode(M, monkeypatch):
+    import huggingface_hub
+    checked = []
+    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache",
+                        lambda model_id, filename: checked.append((model_id, filename)) or "/cached")
+    monkeypatch.setattr(M.torch.cuda, "is_available", lambda: True)
+    assert M.preflight(BackgroundSwapSettings()) == []
+    assert M.FAST_RECIPE.lora not in checked
+    checked.clear()
+    assert M.preflight(BackgroundSwapSettings(fast_mode=True)) == []
+    assert checked[-1] == M.FAST_RECIPE.lora
+
+
+def test_factory_picks_load_modes_from_vram(M, monkeypatch):
+    calls = {}
+
+    def fake(name):
+        def make(*args):
+            calls[name] = args
+            return types.SimpleNamespace(close=lambda: None)
+        return make
+    for cls in ("HFPromptGenerator", "HFInpainter", "HFValidator"):
+        monkeypatch.setattr(M, cls, fake(cls))
+    for vram, llm, vlm, offload in ((7.62, "fp16", "4bit", "model"), (23.5, "fp16", "fp16", "none")):
+        monkeypatch.setattr(M, "gpu_vram_gb", lambda v=vram: v)
+        f = M.HFModelFactory(BackgroundSwapSettings(), ["box"])
+        with f.prompt_model():
+            pass
+        with f.inpainter():
+            pass
+        with f.validator():
+            pass
+        assert calls["HFPromptGenerator"][-1] == llm
+        assert calls["HFValidator"][-1] == vlm
+        assert calls["HFInpainter"][1:] == (offload, False)

@@ -1,24 +1,30 @@
 """Background Swap 탭의 실행 제어: Run/Preview/Export 사전 점검, 워커 실행·중지, 이벤트 처리, Report.
 
 BackgroundTab에 섞어 쓰는 mixin. 탭이 제공해야 하는 것: _vars, _btns, _status_lbl, _stage_lbl,
-_progress, build_settings(), load_results(), 그리고 시험/교체용 이음매 _make_worker(), _reset_output().
+_progress, _eta_lbl, _items, _hw/_hw_path(이 PC 프로필), build_settings(), load_results(), 그리고 시험/교체용 이음매 _make_worker(), _reset_output().
 """
 import dataclasses
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 
+from background_swap.common.estimate import (EtaTracker, Plan, format_duration, format_finish, make_plan,
+                                             speed_key)
+from background_swap.common.hardware import HardwareProfile, record_speed, save_profile
 from background_swap.dataset.inputs import looks_non_train
 from background_swap.common.settings import (BackgroundSwapSettings, generation_diff, load_settings,
                                       save_settings, validate_settings)
+from gui import app_prefs
 from gui.background_dialogs import ReportWindow, ask_choice
-from gui.background_results import format_export_message, format_report, load_report
+from gui.background_results import (format_export_message, format_references, format_report,
+                                    format_translations, load_report)
 
-_STAGE_KO = {"inputs": "입력", "masks": "마스크", "prompts": "프롬프트", "inpaint": "인페인팅",
+_STAGE_KO = {"translate": "번역", "references": "참고 사진", "inputs": "입력", "masks": "마스크", "prompts": "프롬프트", "inpaint": "인페인팅",
              "validate": "검증", "report": "리포트"}
-_DEPS_HINT = "pip install -r requirements-bg.txt (augmentor/.venv 사용 권장)"
+_DEPS_HINT = "make venv (Large) 또는 make venv-small (Small)"
 PREVIEW_N = 3
 
 
@@ -85,7 +91,7 @@ class RunMixin:
                 return s
             if choice != "new":
                 return None
-            path = filedialog.askdirectory(title="새 출력 폴더 선택")
+            path = app_prefs.ask_directory("새 출력 폴더 선택", str(s.output_dir))
             if not path:
                 return None
             s = dataclasses.replace(s, output_dir=Path(path))
@@ -104,7 +110,7 @@ class RunMixin:
             return
         path = Path(s.output_dir) / "run_settings.json"
         if self._save_job_settings(s, path):
-            self._launch("run", ["run", "--settings", str(path)], Path(s.output_dir))
+            self._launch("run", ["run", "--settings", str(path)], Path(s.output_dir), s)
 
     def _on_preview(self) -> None:
         if self.is_running():
@@ -112,11 +118,11 @@ class RunMixin:
         s = self._checked_settings()
         if s is None:
             return
-        # run_settings.json(이어하기 기준)은 건드리지 않도록 별도 파일에 저장한다
+        # separate file so run_settings.json (the resume reference) stays untouched
         path = Path(s.output_dir) / "_preview_settings.json"
         if self._save_job_settings(s, path):
             self._launch("preview", ["preview", "--settings", str(path), "--n", str(PREVIEW_N)],
-                         Path(s.output_dir))
+                         Path(s.output_dir), s)
 
     def _on_export(self) -> None:
         if self.is_running():
@@ -127,10 +133,10 @@ class RunMixin:
             messagebox.showerror("Error", "내보낼 결과가 없습니다. 먼저 Run으로 결과를 만드세요 "
                                  "(Output 폴더에 run_settings.json 필요).", parent=self)
             return
-        images = filedialog.askdirectory(title="내보낼 images 폴더 선택")
+        images = app_prefs.ask_directory("내보낼 images 폴더 선택")
         if not images:
             return
-        labels = filedialog.askdirectory(title="내보낼 labels 폴더 선택")
+        labels = app_prefs.ask_directory("내보낼 labels 폴더 선택", images)
         if not labels:
             return
         settings_path = run_settings
@@ -157,8 +163,51 @@ class RunMixin:
             self._status_lbl.configure(text="중지하는 중…")
             self._worker.stop()
 
-    def _launch(self, mode: str, args: list[str], out: Path) -> None:
-        self._job = {"mode": mode, "out": out, "stopping": False, "error": False, "done": None}
+    def _job_plan(self, mode: str, s: Optional[BackgroundSwapSettings],
+                  profile: Optional[HardwareProfile]) -> Optional[Plan]:
+        """실행 중 남은 시간 계산에 쓸 첫 시도 기준 계획 (Export는 없음).
+        profile=None이면 기준 GPU 값 그대로 (이 PC 속도 배율을 잴 때의 기준)."""
+        if s is None or mode == "export":
+            return None
+        items = list(getattr(self, "_items", []) or [])
+        size = (items[0].width, items[0].height) if items else None
+        if mode == "preview":
+            return make_plan(dataclasses.replace(s, num_variants=1, max_attempts=1),
+                             min(PREVIEW_N, len(items)), size, profile)
+        return make_plan(s, len(items), size, profile)
+
+    def _learn_speed(self, job: dict) -> None:
+        """끝난 Preview/Run에서 잰 단계별 속도를 이 PC 프로필에 저장한다 (다음 예상 시간에 반영)."""
+        base, eta, s = job.get("base_plan"), job.get("eta"), job.get("settings")
+        if base is None or eta is None or s is None or not self._hw.known:
+            return
+        # keyed by stage + model so Small/Large/fast mode learn separate speeds
+        ratios = {speed_key(s, stage): r for stage, r in eta.speed_ratios(base).items()}
+        if not ratios:
+            return
+        self._hw = record_speed(self._hw, ratios)
+        try:
+            save_profile(self._hw, self._hw_path)
+        except OSError:
+            pass
+
+    def _show_eta(self, stage: str, done: int, total: int) -> None:
+        remaining = self._job.setdefault("eta", EtaTracker()).update(stage, done, total)
+        if remaining is None:
+            text = "남은 시간: 계산 중…"
+        else:
+            text = f"남은 시간: {format_duration(remaining)} · 완료 예상 {format_finish(remaining)}"
+            if self._job.get("mode") == "run":
+                text += " (실제 속도 기준, 재시도 제외)"
+        self._eta_lbl.configure(text=text)
+
+    def _launch(self, mode: str, args: list[str], out: Path,
+                settings: Optional[BackgroundSwapSettings] = None) -> None:
+        self._job = {"mode": mode, "out": out, "stopping": False, "error": False, "done": None,
+                     "eta": EtaTracker(self._job_plan(mode, settings, self._hw)),
+                     "base_plan": self._job_plan(mode, settings, None), "settings": settings,
+                     "start": time.monotonic()}
+        self._eta_lbl.configure(text="남은 시간: 계산 중…")
         self._worker = self._make_worker(args, lambda ev: self._post(self._on_worker_event, ev),
                                          lambda code, err: self._post(self._on_worker_exit, code, err))
         self._progress.configure(maximum=1, value=0)
@@ -192,11 +241,12 @@ class RunMixin:
                 self._progress.configure(maximum=total, value=min(done, total))
                 name = _STAGE_KO.get(ev["stage"], str(ev["stage"]))
                 self._stage_lbl.configure(text=f"단계: {name} ({done}/{ev.get('total', 0)})")
+                self._show_eta(str(ev["stage"]), done, int(ev.get("total", 0)))
             elif ev.get("event") == "warning":
                 self._status_lbl.configure(text=f"경고: {ev.get('message', '')}")
             elif ev.get("event") == "error":
                 msg = str(ev.get("message", "알 수 없는 오류"))
-                if ev.get("code") == 5 and "requirements-bg.txt" not in msg:
+                if ev.get("code") == 5 and "make venv" not in msg:
                     msg += f"\n{_DEPS_HINT}"
                 self._job["error"] = True
                 messagebox.showerror("Error", msg, parent=self)
@@ -209,6 +259,13 @@ class RunMixin:
         job, self._worker = self._job, None
         self._set_running(False)
         mode, out, done = job.get("mode"), job.get("out"), job.get("done") or {}
+        elapsed = format_duration(time.monotonic() - job.get("start", time.monotonic()))
+        label = {"run": "Run", "preview": "Preview", "export": "Export"}.get(mode, str(mode))
+        self._last_job_note = (f"지난 {label}: 걸린 시간 {elapsed}" if code == 0
+                               else f"지난 {label}: 멈춤 (걸린 시간 {elapsed})")
+        self._update_estimate()
+        if code == 0 or job.get("stopping"):
+            self._learn_speed(job)          # speeds measured before a stop are still valid
         if code == 0:
             self._progress.configure(value=self._progress.cget("maximum"))
             self._stage_lbl.configure(text="단계: 완료")
@@ -218,11 +275,17 @@ class RunMixin:
                 messagebox.showinfo("Export", msg, parent=self)
             elif mode == "preview":
                 self.load_results(Path(done.get("preview_dir") or out / "_preview"))
+                text = "\n\n".join(x for x in (format_translations(done.get("translations")),
+                                                 format_references(done.get("references"))) if x)
+                if text:
+                    title = ("번역 결과 (한국어 → 영어)" if done.get("translations") and not done.get("references")
+                             else "참고 사진 설명" if not done.get("translations") else "번역 결과와 참고 사진 설명")
+                    ReportWindow(self, text, title=title)
             else:
                 self.load_results(out)
             return
         if mode == "run" and (out / "Manifest.jsonl").is_file():
-            self.load_results(out)          # 중간까지의 결과도 볼 수 있게
+            self.load_results(out)
         if job.get("stopping"):
             self._status_lbl.configure(text="중지됨 — 다시 Run하면 이어서 진행합니다")
         elif job.get("error"):

@@ -12,7 +12,7 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:  # 정적 분석용; 런타임에는 import하지 않는다
+if TYPE_CHECKING:
     from background_swap.models.hf import (HFInpainter, HFModelFactory, HFPromptGenerator,
                                            HFSegmenter, HFTextDetector, HFValidator,
                                            match_phrase, oom_retry, preflight, release)

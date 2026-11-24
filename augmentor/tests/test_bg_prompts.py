@@ -121,7 +121,7 @@ def test_looks_like_keyword_list_negative_for_natural_sentence():
     text = "A spacious school gymnasium with grey carpet and sponsor banners on the walls."
     assert not looks_like_keyword_list(text, AXES)
     assert not looks_like_keyword_list(text, [""])
-    # 한 단어 축 이름이 자연스러운 문장 속에 쓰인 것만으로는 키워드 나열이 아니다.
+    # a one-word axis name used inside a natural sentence is not a keyword list
     assert not looks_like_keyword_list(
         "A school gymnasium venue lit by warm LED lighting, with grey carpet.", AXES)
 

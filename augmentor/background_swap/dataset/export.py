@@ -20,7 +20,7 @@ class NonTrainTargetError(ValueError):
 class ExportResult:
     copied: int
     skipped_existing: int
-    skipped_unaccepted: int = 0   # Accepted/에 있지만 Manifest에 accepted 레코드가 없는 쌍
+    skipped_unaccepted: int = 0   # pairs in Accepted/ with no accepted record in Manifest
 
 
 def _stage_copy(src: Path, dst: Path) -> Path:

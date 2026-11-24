@@ -77,9 +77,9 @@ def test_build_report_avg_seconds_per_generation(tmp_path):
     for r in [_rec("accepted"), _rec("rejected"), _rec("rejected"), _rec("skipped"),
               {**_rec("exhausted"), "attempt": None}]:
         append_jsonl(tmp_path / "Manifest.jsonl", r)
-    assert build_report(tmp_path)["avg_seconds_per_generation"] is None   # timings 없음
+    assert build_report(tmp_path)["avg_seconds_per_generation"] is None   # no timings
     (tmp_path / "timings.json").write_text(json.dumps({"masks": 9.0, "inpaint": 6.0}))
-    assert build_report(tmp_path)["avg_seconds_per_generation"] == 2.0     # 6.0 / 3 시도
+    assert build_report(tmp_path)["avg_seconds_per_generation"] == 2.0     # 6.0 / 3 attempts
 
 
 def test_build_report_avg_seconds_none_without_attempts(tmp_path):
@@ -115,7 +115,7 @@ def test_export_skips_pair_when_only_label_exists(tmp_path):
 
 def test_export_creates_dirs_and_ignores_unpaired_images(tmp_path):
     out = _accepted(tmp_path, ["a_bgswap1"])
-    (out / "Accepted" / "images" / "b_bgswap1.jpg").write_bytes(b"x")   # 라벨 없음
+    (out / "Accepted" / "images" / "b_bgswap1.jpg").write_bytes(b"x")   # no label
     imgs, lbls = tmp_path / "train" / "images", tmp_path / "train" / "labels"
     assert export_accepted(out, imgs, lbls, False) == ExportResult(1, 0)
     assert [p.name for p in imgs.iterdir()] == ["a_bgswap1.jpg"]
@@ -124,7 +124,7 @@ def test_export_creates_dirs_and_ignores_unpaired_images(tmp_path):
 def test_export_skips_pairs_without_accepted_manifest_record(tmp_path):
     out = _accepted(tmp_path, ["a_bgswap1"])
     _accepted_extra = out / "Accepted"
-    for name in ("b_bgswap1", "a_bgswap2"):      # 파일만 있고 accepted 레코드 없음 (고아)
+    for name in ("b_bgswap1", "a_bgswap2"):      # files with no accepted record (orphans)
         (_accepted_extra / "images" / f"{name}.jpg").write_bytes(b"orphan")
         (_accepted_extra / "labels" / f"{name}.txt").write_text("0 0.5 0.5 0.1 0.1\n")
     append_jsonl(out / "Manifest.jsonl", {**_rec("rejected"), "stem": "b"})
@@ -169,7 +169,7 @@ def test_export_orphan_after_crash_then_reject_on_resume(tmp_path):
     stale = [acc / "images" / "img_000_bgswap1.jpg", acc / "labels" / "img_000_bgswap1.txt",
              acc / "previews" / "img_000_bgswap1.jpg"]
     assert all(p.exists() for p in stale)
-    # 미리 만든 Accepted 파일로 export 필터도 확인 (Manifest에 accepted 없음)
+    # pre-made Accepted files also exercise the export filter (no accepted in Manifest)
     imgs, lbls = _dest(tmp_path / "pre")
     assert export_accepted(s.output_dir, imgs, lbls, False) == ExportResult(0, 0, 1)
 
@@ -202,7 +202,7 @@ def test_export_orphan_counted_when_files_survive(tmp_path):
 def test_reject_keeps_accepted_files_of_other_variant(tmp_path):
     """거절 시 정리는 같은 (stem, variant)의 고아만 — 다른 변형의 정상 Accepted 파일은 그대로."""
     s = _settings(tmp_path, n_images=1, use_llm=False, num_variants=2, max_attempts=1)
-    # 변형 1 승인, 변형 2 거절 (VLM 응답 순서)
+    # variant 1 accepted, variant 2 rejected (VLM answer order)
     BackgroundSwapWorkflow(s, FakeFactory.default(
         validator=FakeValidator([vlm_json(True), vlm_json(False)])), NullProgress(), []).run()
     acc = s.output_dir / "Accepted"
@@ -249,7 +249,7 @@ def test_export_failure_mid_pair_leaves_no_half_pair(tmp_path, monkeypatch, fail
         monkeypatch.setattr(export_mod.os, "replace", bad_replace)
     with pytest.raises(OSError):
         export_accepted(out, imgs, lbls, False)
-    assert list(imgs.iterdir()) == [] and list(lbls.iterdir()) == []   # 임시 파일 포함 아무것도 없음
+    assert list(imgs.iterdir()) == [] and list(lbls.iterdir()) == []   # nothing left, temp files included
     monkeypatch.undo()
     assert export_accepted(out, imgs, lbls, False) == ExportResult(1, 0)
     assert [p.name for p in imgs.iterdir()] == ["a_bgswap1.jpg"]

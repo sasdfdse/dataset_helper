@@ -1,6 +1,6 @@
 from background_swap.common.settings import (
-    BackgroundSwapSettings, KeepItem, generation_diff, load_settings,
-    save_settings, settings_from_dict, validate_settings,
+    BackgroundSwapSettings, KeepItem, active_scene_axes, axis_label, effective_settings,
+    generation_diff, load_settings, save_settings, settings_from_dict, validate_settings,
 )
 
 
@@ -48,7 +48,7 @@ def test_generation_diff_compares_nested_by_value():
 
 def test_validate_settings_requires_dirs():
     errs = validate_settings(BackgroundSwapSettings())
-    assert len(errs) == 3   # images_dir, labels_dir, output_dir 미지정
+    assert len(errs) == 3   # images_dir, labels_dir, output_dir missing
 
 
 def test_validate_settings_rejects_output_equal_to_input(tmp_path):
@@ -69,3 +69,62 @@ def test_validate_settings_ranges(tmp_path):
     s = BackgroundSwapSettings(images_dir=tmp_path/"img", labels_dir=tmp_path/"lbl", output_dir=tmp_path/"out",
                                num_variants=0, max_attempts=11, frame_stride=0)
     assert len(validate_settings(s)) == 3
+
+
+def _axes_settings(**kw):
+    return BackgroundSwapSettings(scene_axes={"venue": ["gym"], "lighting": ["dim"], "camera": []}, **kw)
+
+
+def test_disabled_axes_roundtrip_and_default(tmp_path):
+    assert BackgroundSwapSettings().disabled_scene_axes == []
+    s = _axes_settings(disabled_scene_axes=["camera"])
+    save_settings(s, tmp_path / "s.json")
+    assert load_settings(tmp_path / "s.json") == s
+    assert settings_from_dict({"disabled_scene_axes": ["lighting", 3]}).disabled_scene_axes == ["lighting", "3"]
+
+
+def test_active_scene_axes_and_effective_settings():
+    s = _axes_settings(disabled_scene_axes=["lighting", "camera"])
+    assert active_scene_axes(s) == {"venue": ["gym"]}
+    e = effective_settings(s)
+    assert e.scene_axes == {"venue": ["gym"]} and e.disabled_scene_axes == []
+    assert s.scene_axes["lighting"] == ["dim"]          # the original is unchanged
+
+
+def test_generation_diff_only_looks_at_checked_axes():
+    a = _axes_settings(disabled_scene_axes=["camera"])
+    b = BackgroundSwapSettings(scene_axes={"venue": ["gym"], "lighting": ["dim"], "camera": ["blur"]},
+                               disabled_scene_axes=["camera"])
+    assert generation_diff(a, b) == []                    # only an unchecked row's values changed
+    c = _axes_settings(disabled_scene_axes=["camera", "lighting"])
+    assert generation_diff(a, c) == ["scene_axes"]        # a used row changed
+
+
+def test_validate_scene_axes_only_checks_checked_rows(tmp_path):
+    (tmp_path / "i").mkdir()
+    (tmp_path / "l").mkdir()
+    base = dict(images_dir=tmp_path / "i", labels_dir=tmp_path / "l", output_dir=tmp_path / "o")
+    assert validate_settings(_axes_settings(disabled_scene_axes=["camera"], **base)) == []
+    errs = validate_settings(_axes_settings(**base))
+    assert any("사진 느낌" in e for e in errs)            # checked row left empty
+    errs = validate_settings(_axes_settings(disabled_scene_axes=["venue", "lighting", "camera"], **base))
+    assert any("배경 조합" in e and "1개 이상" in e for e in errs)
+
+
+def test_axis_label():
+    assert [axis_label(n) for n in ("venue", "lighting", "surroundings_floor", "context", "camera")] == [
+        "장소", "조명", "바닥", "주변 풍경", "사진 느낌"]
+    assert axis_label("mood") == "mood"
+
+
+def test_model_presets_and_fast_mode_needs_sdxl(tmp_path):
+    import dataclasses
+    from background_swap.common.settings import MODEL_PRESETS, ModelIds, is_sdxl, model_preset
+    assert model_preset(ModelIds()) == "large"
+    assert model_preset(MODEL_PRESETS["small"]) == "small"
+    assert model_preset(dataclasses.replace(ModelIds(), llm="me/my-llm")) == "custom"
+    assert is_sdxl(MODEL_PRESETS["large"].inpainter) and not is_sdxl(MODEL_PRESETS["small"].inpainter)
+    base = dict(images_dir=tmp_path, labels_dir=tmp_path, output_dir=tmp_path / "out")
+    assert validate_settings(BackgroundSwapSettings(fast_mode=True, **base)) == []
+    errs = validate_settings(BackgroundSwapSettings(fast_mode=True, models=MODEL_PRESETS["small"], **base))
+    assert len(errs) == 1 and "빠른 모드" in errs[0]

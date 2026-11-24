@@ -34,7 +34,7 @@ def test_full_pipeline_one_image_on_gpu(tmp_path):
     elapsed = time.perf_counter() - t0
     peak = torch.cuda.max_memory_allocated()
 
-    # 거부되면 워크플로가 시도 레코드 뒤에 exhausted 레코드를 덧붙이므로 마지막 "시도" 레코드를 본다
+    # on reject the workflow appends an exhausted record after the attempt, so check the last attempt record
     records = read_jsonl(s.output_dir / "Manifest.jsonl")
     attempts = [r for r in records if r.get("attempt") is not None]
     assert attempts, records

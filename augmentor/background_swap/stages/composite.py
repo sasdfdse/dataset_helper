@@ -10,7 +10,7 @@ _RED = (0, 0, 255)
 _ORANGE = (0, 140, 255)
 _GREEN = (0, 200, 0)
 
-# gui/augment_tab.py의 _BBOX_COLORS와 같은 값 (GUI 모듈 import를 피하려고 복사)
+# Same values as _BBOX_COLORS in gui/augment_tab.py (copied to avoid importing the GUI)
 _BBOX_COLORS = [
     "#FF4444", "#44FF44", "#4444FF", "#FFFF44",
     "#FF44FF", "#44FFFF", "#FF8844", "#44FF88",

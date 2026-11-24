@@ -20,8 +20,8 @@ def test_feather_only_on_inpaint_side():
     orig = np.zeros((40, 40, 3), np.uint8); gen = np.full_like(orig, 200)
     protect = np.zeros((40, 40), bool); protect[:, :20] = True
     out = composite(orig, gen, protect, feather_px=4)
-    assert 0 < out[20, 21, 0] < 200          # 경계 바로 바깥은 섞임
-    assert out[20, 30, 0] == 200             # feather 밖은 생성 그대로
+    assert 0 < out[20, 21, 0] < 200          # just outside the edge is blended
+    assert out[20, 30, 0] == 200             # outside the feather stays generated
 
 
 def test_alpha_map_values_and_edge_cases():
@@ -70,12 +70,12 @@ def test_mask_overlay_precedence():
 
 
 @pytest.mark.parametrize("w,h,native,mx,mode,manual,expected", [
-    (640, 480, 1024, 1280, "auto", 1024, (1024, 768)),    # 작은 원본 → 네이티브로 업스케일
-    (1920, 1080, 1024, 1280, "auto", 1024, (1280, 720)),  # 큰 원본 → 상한으로 다운스케일
-    (1100, 700, 1024, 1280, "auto", 1024, (1104, 704)),   # 범위 안 → 원본 (8 배수)
+    (640, 480, 1024, 1280, "auto", 1024, (1024, 768)),    # small source -> upscaled to native
+    (1920, 1080, 1024, 1280, "auto", 1024, (1280, 720)),  # large source -> downscaled to the cap
+    (1100, 700, 1024, 1280, "auto", 1024, (1104, 704)),   # within range -> source size (multiple of 8)
     (640, 480, 512, 1280, "auto", 1024, (640, 480)),      # SD1.5
     (640, 480, 1024, 1280, "manual", 768, (768, 576)),
-    (1024, 768, 1024, 768, "auto", 1024, (768, 576)),     # native > max → max 우선
+    (1024, 768, 1024, 768, "auto", 1024, (768, 576)),     # native > max -> max wins
 ])
 def test_working_size(w, h, native, mx, mode, manual, expected):
     assert working_size(w, h, native, mx, mode, manual) == expected

@@ -36,6 +36,8 @@ from background_swap.dataset.report import class_recall, merge_recall, write_rep
 from background_swap.stages.prompts import (PromptGenerator, PromptRequest, TemplatePromptGenerator, derive_seed,
                       finalize_prompt, negative_prompt, sample_scene)
 from background_swap.common.settings import BackgroundSwapSettings
+from background_swap.stages.references import Describer
+from background_swap.stages.translate import Translator
 from background_swap.common.store import (append_jsonl, atomic_write_bytes, atomic_write_text, imwrite_atomic,
                     read_jsonl, read_mask, write_mask)
 from background_swap.stages.validate import VLM_PROMPT, ImageValidator, combine, find_new_objects, rule_checks
@@ -50,6 +52,8 @@ MASK_NAMES = ("object_core", "object_protect", "keep", "inpaint")
 class ModelFactory(Protocol):
     """각 메서드는 컨텍스트 매니저. 종료 시 모델을 해제(GPU 메모리 반환)한다."""
 
+    def translator(self) -> AbstractContextManager[Translator]: ...
+    def describer(self) -> AbstractContextManager[Describer]: ...
     def mask_models(self) -> AbstractContextManager[tuple[Segmenter, TextDetector]]: ...
     def prompt_model(self) -> AbstractContextManager[PromptGenerator]: ...
     def inpainter(self) -> AbstractContextManager[Inpainter]: ...
@@ -70,7 +74,7 @@ def _read_labels_strict(label_path: Path) -> list[BBox] | None:
         boxes = read_labels(label_path)
         with open(label_path) as f:
             lines = sum(1 for line in f if line.strip())
-    except ValueError:   # int('0.0'), float 변환 실패, UnicodeDecodeError
+    except ValueError:   # int('0.0'), bad float, UnicodeDecodeError (a ValueError subclass)
         return None
     return boxes if len(boxes) == lines else None
 
@@ -99,13 +103,11 @@ class BackgroundSwapWorkflow:
         self.out = Path(settings.output_dir)
         self._items: dict[str, ImageItem] = {}
         self._mask_meta: dict[str, dict] = {}
-        # Manifest 색인 (파일과 동기화: 추가할 때마다 갱신)
+        # Manifest index (kept in sync with the file on every append)
         self._skipped_stems: set[str] = set()
         self._attempted: set[tuple] = set()       # (stem, n, k)
         self._accepted: set[tuple] = set()        # (stem, n)
         self._exhausted: set[tuple] = set()       # (stem, n)
-
-    # ── 경로 헬퍼 ──────────────────────────────────────────────────
 
     @property
     def manifest_path(self) -> Path:
@@ -136,8 +138,6 @@ class BackgroundSwapWorkflow:
     def rejected_path(self, stem: str, n: int, k: int) -> Path:
         return self.out / "Rejected" / f"{stem}_bgswap{n}_a{k}.jpg"
 
-    # ── 실행 ───────────────────────────────────────────────────────
-
     def run(self) -> None:
         self.out.mkdir(parents=True, exist_ok=True)
         self._load_manifest_index()
@@ -152,8 +152,8 @@ class BackgroundSwapWorkflow:
                        if (stem, n) not in self._accepted
                        and _key(stem, n, k) not in self._attempted]
             if not targets:
-                # 이 라운드는 이미 끝났다(재개). 이전 실행이 라운드 k 이후에 중단됐을 수 있으므로
-                # 종료하지 않고 다음 라운드로 넘어간다 — 대상이 없으면 아무 모델도 열지 않는다.
+                # This round already finished (resume). The previous run may have stopped after round k,
+                # so move on instead of exiting; with no targets no model is loaded.
                 continue
             with self._timed("prompts"):
                 jobs = self._stage_prompts(targets, k)
@@ -170,11 +170,9 @@ class BackgroundSwapWorkflow:
         self.progress.stage("report", 1)
         t0 = time.perf_counter()
         write_report(self.out)
-        # 리포트 자신의 소요 시간은 report.json 작성 뒤에 누적한다(다음 실행의 리포트에 반영).
+        # The report's own time is added after report.json is written (it shows in the next run's report).
         self._add_timing("report", time.perf_counter() - t0)
         self.progress.advance()
-
-    # ── 단계별 소요 시간 ───────────────────────────────────────────
 
     @property
     def timings_path(self) -> Path:
@@ -194,8 +192,6 @@ class BackgroundSwapWorkflow:
             yield
         finally:
             self._add_timing(stage, time.perf_counter() - t0)
-
-    # ── Manifest ───────────────────────────────────────────────────
 
     def _load_manifest_index(self) -> None:
         for r in read_jsonl(self.manifest_path):
@@ -244,8 +240,6 @@ class BackgroundSwapWorkflow:
     def _warnings(self, stem: str) -> list[str]:
         return list(self._mask_meta.get(stem, {}).get("warnings", []))
 
-    # ── Stage 0: inputs ────────────────────────────────────────────
-
     def _stage_inputs(self) -> None:
         s = self.settings
         items, skipped = collect_items(Path(s.images_dir), Path(s.labels_dir), s.frame_stride)
@@ -262,8 +256,6 @@ class BackgroundSwapWorkflow:
         for stem, reason in skipped:
             self._record_skip(stem, reason, [])
         self.progress.advance(len(items) + len(skipped))
-
-    # ── Stage 1: masks ─────────────────────────────────────────────
 
     def _stage_masks(self) -> None:
         todo: list[ImageItem] = []
@@ -284,7 +276,7 @@ class BackgroundSwapWorkflow:
             for it in todo:
                 self._make_masks(it, segmenter, detector)
                 self.progress.advance()
-            if need_recall:   # 같은 컨텍스트의 detector 재사용 (추가 컨텍스트 없음)
+            if need_recall:
                 self._compute_recall(detector)
 
     @property
@@ -324,7 +316,7 @@ class BackgroundSwapWorkflow:
                     write_mask(self.mask_png_path(it.stem, name), getattr(ms, name))
         if meta["skip_reason"] is not None:
             self._record_skip(it.stem, meta["skip_reason"], meta["warnings"])
-        # json은 마지막에 써서 재개 기준으로 삼는다
+        # write the json last; resume treats it as the completion marker
         atomic_write_text(self.mask_json_path(it.stem), json.dumps(meta, ensure_ascii=False))
         self._mask_meta[it.stem] = meta
 
@@ -332,8 +324,6 @@ class BackgroundSwapWorkflow:
         m = {name: read_mask(self.mask_png_path(stem, name)) for name in MASK_NAMES}
         return MaskSet(m["object_core"], m["object_protect"], m["keep"], m["inpaint"],
                        self._warnings(stem), None)
-
-    # ── Stage 2: prompts ───────────────────────────────────────────
 
     def _stage_prompts(self, targets: list[tuple[str, int]], k: int) -> list[Job]:
         existing: dict[tuple, Job] = {}
@@ -379,8 +369,6 @@ class BackgroundSwapWorkflow:
                 existing[_key(stem, n, k)] = job
                 self.progress.advance()
 
-    # ── Stage 3: inpaint ───────────────────────────────────────────
-
     def _stage_inpaint(self, jobs: list[Job]) -> None:
         todo = [j for j in jobs if not self.generated_path(j.stem, j.variant, j.attempt).exists()]
         self.progress.stage("inpaint", len(todo))
@@ -392,8 +380,6 @@ class BackgroundSwapWorkflow:
                 out = run_inpaint(inpainter, orig, self._load_masks(job.stem), job, self.settings)
                 imwrite_atomic(self.generated_path(job.stem, job.variant, job.attempt), out)
                 self.progress.advance()
-
-    # ── Stage 4: validate ──────────────────────────────────────────
 
     def _load_orig(self, stem: str) -> np.ndarray:
         img = load_image_bgr(self._items[stem].image_path)
@@ -476,8 +462,8 @@ class BackgroundSwapWorkflow:
         else:
             imwrite_atomic(self.rejected_path(stem, n, job.attempt), out)
             if (stem, n) not in self._accepted:
-                # 이전 실행이 Accepted 파일을 쓴 뒤 Manifest 기록 전에 중단됐다면 그 파일은
-                # 승인 기록이 없는 고아다. 이번 판정이 거절이므로 지운다.
+                # If a previous run wrote Accepted files but stopped before the Manifest record, those files
+                # are orphans with no accept record. This verdict is a reject, so delete them.
                 for p in (self.accepted_image_path(stem, n), self.accepted_label_path(stem, n),
                           self.accepted_preview_path(stem, n)):
                     p.unlink(missing_ok=True)

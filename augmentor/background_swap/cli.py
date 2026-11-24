@@ -3,11 +3,13 @@
 stdout에는 JSON Lines만 출력한다(라이브러리 경고/로그는 stderr로 보낸다).
 종료 코드: 0 성공, 1 기타 예외, 2 설정 오류, 3 non-train 거부,
 4 기존 출력과 설정 불일치, 5 의존성/사전 점검 실패, 6 GPU OOM.
+명령: run, preview, export, probe(GPU 확인: done 이벤트에 gpu/vram_gb/tflops).
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import os
 import sys
 import traceback
@@ -19,16 +21,19 @@ from background_swap.common.domain import GpuOutOfMemory
 from background_swap.dataset.export import NonTrainTargetError, export_accepted
 from background_swap.dataset.inputs import looks_non_train
 from background_swap.common.progress import JsonLinesProgress
-from background_swap.common.settings import (BackgroundSwapSettings, generation_diff, load_settings,
-                                      validate_settings)
+from background_swap.common.settings import (BackgroundSwapSettings, effective_settings, generation_diff,
+                                             load_settings, validate_settings)
 from background_swap.pipeline.workflow import BackgroundSwapWorkflow, ModelFactory, run_preview
+from background_swap.stages.references import CACHE_NAME as REFERENCE_CACHE_NAME
+from background_swap.stages.references import ReferencePhotoError, describe_references, pending_references
+from background_swap.stages.translate import CACHE_NAME, TranslationError, pending_sources, translate_inputs
 
 EXIT_OK, EXIT_OTHER, EXIT_SETTINGS, EXIT_NON_TRAIN, EXIT_MISMATCH, EXIT_DEPS, EXIT_OOM = (
     0, 1, 2, 3, 4, 5, 6)
 
 OOM_MESSAGE = "VRAM 부족 — 고급 설정에서 해상도를 낮추거나 더 작은 모델을 사용하세요."
 NO_CLASS_NAMES_MESSAGE = "클래스 이름 파일이 없어 새 객체 검사를 건너뜁니다."
-DEPS_HINT = "pip install -r requirements-bg.txt"
+DEPS_HINT = "make venv (Large) 또는 make venv-small (Small)"
 
 FactoryBuilder = Callable[[BackgroundSwapSettings, list], ModelFactory]
 
@@ -54,13 +59,22 @@ def _parser() -> argparse.ArgumentParser:
     exp.add_argument("--settings", required=True, type=Path)
     exp.add_argument("--images-dir", required=True, type=Path)
     exp.add_argument("--labels-dir", required=True, type=Path)
+    sub.add_parser("probe", help="GPU 이름/VRAM/속도 확인 (모델은 올리지 않음)")
     return p
+
+
+def _probe() -> dict:
+    try:
+        from background_swap.models.probe import probe_gpu
+    except ImportError as e:
+        raise _Fail(EXIT_DEPS, f"필수 패키지를 불러올 수 없습니다 ({e}). 다음을 실행하세요: {DEPS_HINT}")
+    return probe_gpu()
 
 
 def _load(path: Path) -> BackgroundSwapSettings:
     try:
         return load_settings(path)
-    except Exception as e:  # 파일 없음/JSON 오류/형식 오류
+    except Exception as e:
         raise _Fail(EXIT_SETTINGS, f"설정 파일을 읽을 수 없습니다: {path} ({type(e).__name__}: {e})")
 
 
@@ -90,10 +104,14 @@ def _class_names(s: BackgroundSwapSettings, progress: JsonLinesProgress) -> list
     return names
 
 
-def _default_factory_builder(s: BackgroundSwapSettings) -> FactoryBuilder:
+def _default_factory_builder(s: BackgroundSwapSettings, needs_translation: bool = False,
+                             needs_describer: bool = False) -> FactoryBuilder:
     try:
         from background_swap.models import HFModelFactory, preflight
-        problems = preflight(s)
+        # Translation needs the LLM and reference captions need the VLM, so check them even when disabled
+        checked = dataclasses.replace(s, use_llm=s.use_llm or needs_translation,
+                                      use_vlm=s.use_vlm or needs_describer)
+        problems = preflight(checked)
     except ImportError as e:
         raise _Fail(EXIT_DEPS, f"필수 패키지를 불러올 수 없습니다 ({e}). "
                                f"다음을 실행하세요: {DEPS_HINT}")
@@ -103,14 +121,36 @@ def _default_factory_builder(s: BackgroundSwapSettings) -> FactoryBuilder:
 
 
 def _prepare_models(s: BackgroundSwapSettings, factory_builder: FactoryBuilder | None,
-                    class_names: list[str]) -> ModelFactory:
-    builder = factory_builder if factory_builder is not None else _default_factory_builder(s)
-    return builder(s, class_names)
+                    class_names: list[str], progress: JsonLinesProgress,
+                    ) -> tuple[BackgroundSwapSettings, list[str], ModelFactory, list[dict], list[dict]]:
+    """한글 입력을 영어로 바꾸고 참고 사진 설명을 배경 조합에 더한 설정/클래스 이름, 그 설정으로 만든
+    모델 팩토리, 적용한 번역 목록, 참고 사진 설명 목록을 돌려준다."""
+    cache = Path(s.output_dir) / CACHE_NAME
+    ref_cache = Path(s.output_dir) / REFERENCE_CACHE_NAME
+    pending = pending_sources(s, class_names, cache)
+    builder = (factory_builder if factory_builder is not None
+               else _default_factory_builder(s, needs_translation=bool(pending),
+                                             needs_describer=bool(pending_references(s, ref_cache))))
+    factory = builder(s, class_names)
+    try:
+        new_s, new_names, used = translate_inputs(s, class_names, factory.translator, progress, cache)
+    except TranslationError as e:
+        raise _Fail(EXIT_SETTINGS, str(e))
+    if used:
+        factory = builder(new_s, new_names)
+    try:
+        new_s, references = describe_references(new_s, factory.describer, progress, ref_cache)
+    except ReferencePhotoError as e:
+        raise _Fail(EXIT_SETTINGS, str(e))
+    return new_s, new_names, factory, [t.to_dict() for t in used], references
 
 
 def _execute(args: argparse.Namespace, factory_builder: FactoryBuilder | None,
              progress: JsonLinesProgress) -> dict:
     """성공 시 done 이벤트에 덧붙일 필드를 반환. 실패는 _Fail로 알린다."""
+    if args.command == "probe":
+        with contextlib.redirect_stdout(sys.stderr):
+            return _probe()
     s = _load(args.settings)
 
     if args.command == "export":
@@ -130,23 +170,28 @@ def _execute(args: argparse.Namespace, factory_builder: FactoryBuilder | None,
     _check_train_only(s)
     if args.command == "run":
         _check_resume(s, args.settings)
+    s = effective_settings(s)
     class_names = _class_names(s, progress)
-    # 무거운 모듈 import/preflight/모델 팩토리/워크플로의 stdout 출력은 stderr로 보낸다.
-    # progress는 리다이렉트 이전에 바인딩된 실제 stdout 스트림에 계속 쓴다.
+    # Route stdout from heavy imports/preflight/models/workflow to stderr;
+    # progress keeps writing to the real stdout it bound before this redirect.
     with contextlib.redirect_stdout(sys.stderr):
-        factory = _prepare_models(s, factory_builder, class_names)
+        s, class_names, factory, translations, references = _prepare_models(
+            s, factory_builder, class_names, progress)
+        extra = {"translations": translations} if translations else {}
+        if references:
+            extra["references"] = references
         if args.command == "run":
             BackgroundSwapWorkflow(s, factory, progress, class_names).run()
-            return {}
+            return extra
         preview_dir = run_preview(s, factory, progress, class_names, args.n, args.seed)
-    return {"preview_dir": str(preview_dir)}
+    return {"preview_dir": str(preview_dir), **extra}
 
 
 def main(argv: list[str], factory_builder: FactoryBuilder | None = None,
          stream: TextIO | None = None) -> int:
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
     stream = stream if stream is not None else sys.stdout
-    args = _parser().parse_args(argv)     # 잘못된 인자는 argparse가 종료 코드 2로 처리
+    args = _parser().parse_args(argv)
     progress = JsonLinesProgress(stream)
 
     def fail(code: int, message: str) -> int:

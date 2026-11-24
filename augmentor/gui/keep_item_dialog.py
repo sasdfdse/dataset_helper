@@ -9,8 +9,9 @@ from tkinter import ttk, messagebox
 from background_swap.stages.color_region import hsv_range_from_click
 from background_swap.common.settings import KeepItem
 from gui.background_state import to_number as _to_number
+from gui import theme
 
-_PANEL_BG = "#313244"
+_PANEL_BG = theme.ENTRY
 
 
 def _hsv_swatch_hex(lower, upper) -> str:
@@ -142,7 +143,7 @@ class KeepItemDialog(tk.Toplevel):
             messagebox.showerror("Error", "먼저 Images/Labels 폴더를 지정해 미리보기를 표시하세요.",
                                  parent=self)
             return
-        # 모달 grab 이 메인 창 클릭을 막으므로 선택하는 동안만 해제하고 숨긴다.
+        # The modal grab blocks clicks on the main window, so release it and hide while picking.
         self.grab_release()
         self.withdraw()
         self._tab.begin_pick(lambda img, x, y: self._on_picked(img, x, y, tols), self._pick_done)

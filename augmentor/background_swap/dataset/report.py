@@ -1,4 +1,4 @@
-"""실행 리포트: 상태/사유 집계, 장면 축 분포, Grounding DINO 클래스별 recall, 단계별 소요 시간."""
+"""실행 리포트: 상태/사유 집계, 배경 조합 분포, Grounding DINO 클래스별 recall, 단계별 소요 시간."""
 from __future__ import annotations
 
 import json

@@ -10,8 +10,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# reset_output_dir가 지우는 실행 산출물 (이름 외의 것은 절대 건드리지 않는다).
-# _preview/ 는 의도적으로 포함하지 않는다.
+# Run outputs reset_output_dir deletes (it never touches any other name).
+# _preview/ is intentionally excluded.
 _RUN_ARTIFACTS = (
     "items.jsonl", "masks", "jobs.jsonl", "generated", "Accepted", "Rejected",
     "Manifest.jsonl", "report.json", "run_settings.json",

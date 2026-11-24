@@ -3,6 +3,7 @@ from typing import Optional
 
 import tkinter as tk
 from tkinter import ttk
+from gui import theme
 
 
 class ChoiceDialog(tk.Toplevel):
@@ -45,15 +46,20 @@ def ask_choice(parent, title: str, message: str, choices: list[tuple[str, str]])
 
 
 class ReportWindow(tk.Toplevel):
-    def __init__(self, parent, text: str, title: str = "Background Swap Report"):
+    def __init__(self, parent, text: str, title: str = "Background Swap Report",
+                 size: str = "520x520"):
         super().__init__(parent)
         self.title(title)
-        self.geometry("520x520")
-        box = tk.Text(self, wrap="word", bg="#313244", fg="#cdd6f4", relief="flat", padx=8, pady=8)
+        self.geometry(size)
+        box = tk.Text(self, wrap="word", bg=theme.ENTRY, fg=theme.FG, relief="flat", padx=8, pady=8)
         sb = ttk.Scrollbar(self, orient="vertical", command=box.yview)
         box.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         box.insert("1.0", text)
+        box.tag_configure("heading", foreground=theme.ACCENT)
+        for i, line in enumerate(text.splitlines(), 1):
+            if line.startswith("["):
+                box.tag_add("heading", f"{i}.0", f"{i}.end")
         box.configure(state="disabled")
         self.text_widget: Optional[tk.Text] = box

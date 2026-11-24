@@ -80,7 +80,7 @@ class FakeValidator:
     def __init__(self, responses: list[str]):
         self.responses = list(responses)
         self._i = 0
-        self.calls: list[tuple[int, str]] = []   # (이미지 수, 프롬프트)
+        self.calls: list[tuple[int, str]] = []   # (image count, prompt)
 
     def judge_batch(self, images_rgb, prompt):
         self.calls.append((len(images_rgb), prompt))
@@ -91,10 +91,39 @@ class FakeValidator:
         return out
 
 
+class FakeTranslator:
+    """mapping에 있는 문장은 그 번역을, 없으면 'en:' 접두어를 붙인 문자열을 돌려준다."""
+
+    def __init__(self, mapping: dict[str, str] | None = None):
+        self.mapping = dict(mapping or {})
+        self.calls: list[list[str]] = []
+
+    def translate_batch(self, texts):
+        self.calls.append(list(texts))
+        return [self.mapping.get(t, f"en {len(t)}") for t in texts]
+
+
+class FakeDescriber:
+    """참고 사진 설명 가짜: 사진 크기와 호출 순서로 설명을 만든다 (texts가 있으면 차례로 돌려준다)."""
+
+    def __init__(self, texts=None):
+        self.texts = list(texts) if texts is not None else None
+        self.calls = []
+
+    def describe(self, image_rgb, prompt):
+        self.calls.append(tuple(image_rgb.shape))
+        if self.texts is not None:
+            return self.texts.pop(0)
+        return f"bright arena with banners {len(self.calls)}"
+
+
 class FakeFactory:
     """ModelFactory 가짜. 컨텍스트 진입 시 메서드 이름을 opened에 기록한다."""
 
-    def __init__(self, segmenter, detector, prompt_gen, inpainter, validator):
+    def __init__(self, segmenter, detector, prompt_gen, inpainter, validator, translator=None,
+                 describer=None):
+        self.translator_obj = translator if translator is not None else FakeTranslator()
+        self.describer_obj = describer if describer is not None else FakeDescriber()
         self.segmenter = segmenter
         self.detector_obj = detector
         self.prompt_gen = prompt_gen
@@ -106,7 +135,8 @@ class FakeFactory:
     def default(cls, **overrides) -> "FakeFactory":
         kwargs = dict(segmenter=FakeSegmenter(), detector=FakeDetector({}),
                       prompt_gen=TemplatePromptGenerator(), inpainter=FakeInpainter(),
-                      validator=FakeValidator([vlm_json(True)]))
+                      validator=FakeValidator([vlm_json(True)]), translator=FakeTranslator(),
+                      describer=FakeDescriber())
         unknown = set(overrides) - set(kwargs)
         if unknown:
             raise TypeError(f"unknown FakeFactory overrides: {sorted(unknown)}")
@@ -117,6 +147,16 @@ class FakeFactory:
     def mask_models(self):
         self.opened.append("mask_models")
         yield self.segmenter, self.detector_obj
+
+    @contextmanager
+    def translator(self):
+        self.opened.append("translator")
+        yield self.translator_obj
+
+    @contextmanager
+    def describer(self):
+        self.opened.append("describer")
+        yield self.describer_obj
 
     @contextmanager
     def prompt_model(self):

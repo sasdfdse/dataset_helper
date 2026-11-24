@@ -5,11 +5,14 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 
 from core.label import BBox, read_labels
 from core.pipeline import AugConfig, run_batch, preview_augment, _collect_originals
+from gui import app_prefs, rounded, theme
+from gui.background_dialogs import ReportWindow
+from gui.info_texts import AUGMENT_INFO
 
 
 _PREVIEW_SIZE = (380, 280)
@@ -36,10 +39,9 @@ class _AugToggle:
         self._on_change_cb()
 
     def _refresh(self) -> None:
-        if self._var.get():
-            self._btn.configure(text=f"✔  {self._label}", style="ToggleOn.TButton")
-        else:
-            self._btn.configure(text=f"     {self._label}", style="ToggleOff.TButton")
+        on = bool(self._var.get())
+        self._btn.configure(text=self._label, image=rounded.toggle_image(self._btn, on), compound="left",
+                            style="ToggleOn.TButton" if on else "ToggleOff.TButton")
 
     def grid(self, **kwargs) -> None:
         self._btn.grid(**kwargs)
@@ -55,9 +57,9 @@ class AugmentTab(ttk.Frame):
         self._result_pairs: List[Tuple[Path, Path, Path, Path]] = []
         self._results_mode: bool = False
         self._running: bool = False
+        rounded.install(self.winfo_toplevel())
         self._build_ui()
-
-    # ── Layout ──────────────────────────────────────────────────────
+        self._restore_paths()
 
     def _build_ui(self) -> None:
         self.columnconfigure(0, weight=0, minsize=250)
@@ -187,10 +189,10 @@ class AugmentTab(ttk.Frame):
         self._aug_title_lbl = ttk.Label(img_frame, text="Augmented (실시간 미리보기)")
         self._aug_title_lbl.grid(row=0, column=1)
 
-        self._orig_lbl = ttk.Label(img_frame, background="#313244")
+        self._orig_lbl = ttk.Label(img_frame, style=rounded.PANEL_STYLE)
         self._orig_lbl.grid(row=1, column=0, padx=4, pady=4, sticky="nsew")
 
-        self._aug_lbl = ttk.Label(img_frame, background="#313244")
+        self._aug_lbl = ttk.Label(img_frame, style=rounded.PANEL_STYLE)
         self._aug_lbl.grid(row=1, column=1, padx=4, pady=4, sticky="nsew")
 
         nav_frame = ttk.Frame(img_frame)
@@ -213,25 +215,47 @@ class AugmentTab(ttk.Frame):
 
         self._run_btn = ttk.Button(bottom, text="▶ Run Augmentation", command=self._on_run)
         self._run_btn.grid(row=2, column=0, pady=6)
+        self._info_btn = ttk.Button(bottom, text="ⓘ Info", width=7, command=self._on_info)
+        self._info_btn.grid(row=2, column=0, sticky="e", padx=4)
 
-    # ── Folder browsing ──────────────────────────────────────────────
+    def _on_info(self) -> None:
+        ReportWindow(self, AUGMENT_INFO, title="Info — Augmentation", size="640x720")
 
     def _browse_images(self) -> None:
-        path = filedialog.askdirectory(title="Select images/ folder")
+        path = app_prefs.ask_directory("Select images/ folder", self._images_var.get())
         if path:
-            self._images_var.set(path)
-            self._images_dir = Path(path)
-            self._results_mode = False
-            self._load_originals()
+            self._set_images(path)
 
     def _browse_labels(self) -> None:
-        path = filedialog.askdirectory(title="Select labels/ folder")
+        path = app_prefs.ask_directory("Select labels/ folder",
+                                       self._labels_var.get() or self._images_var.get())
         if path:
-            self._labels_var.set(path)
-            self._labels_dir = Path(path)
-            self._refresh_display()
+            self._set_labels(path)
 
-    # ── Originals loading ────────────────────────────────────────────
+    def _set_images(self, path: str) -> None:
+        self._images_var.set(path)
+        self._images_dir = Path(path)
+        self._results_mode = False
+        app_prefs.remember_path("augment.images", path)
+        self._load_originals()
+
+    def _set_labels(self, path: str) -> None:
+        self._labels_var.set(path)
+        self._labels_dir = Path(path)
+        app_prefs.remember_path("augment.labels", path)
+        self._refresh_display()
+
+    def _restore_paths(self) -> None:
+        """지난번에 고른 images/labels 폴더를 다시 채운다 (폴더가 아직 있을 때만)."""
+        labels = app_prefs.recall_path("augment.labels")
+        if labels and Path(labels).is_dir():
+            self._labels_var.set(labels)
+            self._labels_dir = Path(labels)
+        images = app_prefs.recall_path("augment.images")
+        if images and Path(images).is_dir():
+            self._images_var.set(images)
+            self._images_dir = Path(images)
+            self._load_originals()
 
     def _load_originals(self) -> None:
         if self._images_dir is None:
@@ -243,8 +267,6 @@ class AugmentTab(ttk.Frame):
             self._refresh_display()
         else:
             self._status_lbl.configure(text="이미지 없음")
-
-    # ── Live preview ─────────────────────────────────────────────────
 
     def _on_control_changed(self, *args) -> None:
         if not self._results_mode:
@@ -262,12 +284,10 @@ class AugmentTab(ttk.Frame):
         lbl_path = self._labels_dir / (img_path.stem + ".txt") if self._labels_dir else None
         boxes = read_labels(lbl_path) if lbl_path and lbl_path.exists() else []
 
-        # Left: original
         orig_photo = self._to_photoimage(self._draw_bboxes(img, boxes))
         self._orig_lbl.configure(image=orig_photo)
         self._orig_lbl.image = orig_photo
 
-        # Right: live augmented preview
         config = self._build_config()
         aug_img, aug_boxes = preview_augment(img.copy(), list(boxes), config)
         aug_photo = self._to_photoimage(self._draw_bboxes(aug_img, aug_boxes))
@@ -276,8 +296,6 @@ class AugmentTab(ttk.Frame):
 
         total = len(self._originals)
         self._nav_lbl.configure(text=f"{self._current_idx + 1} / {total}")
-
-    # ── Navigation ───────────────────────────────────────────────────
 
     def _prev_image(self) -> None:
         if self._results_mode:
@@ -325,8 +343,6 @@ class AugmentTab(ttk.Frame):
 
         total = len(self._result_pairs)
         self._nav_lbl.configure(text=f"{idx + 1} / {total}")
-
-    # ── Run ──────────────────────────────────────────────────────────
 
     def _on_run(self) -> None:
         if self._running:
@@ -424,8 +440,6 @@ class AugmentTab(ttk.Frame):
         self._status_lbl.configure(text="오류 발생")
         messagebox.showerror("Augmentation Error", msg)
 
-    # ── Result pairs ─────────────────────────────────────────────────
-
     def _load_result_pairs(self) -> None:
         if self._images_dir is None:
             return
@@ -450,8 +464,6 @@ class AugmentTab(ttk.Frame):
         if self._result_pairs:
             self._show_result(0)
 
-    # ── Image helpers ─────────────────────────────────────────────────
-
     def _draw_bboxes(self, img: np.ndarray, boxes: List[BBox]) -> np.ndarray:
         if img is None:
             return np.zeros((100, 100, 3), dtype=np.uint8)
@@ -471,4 +483,4 @@ class AugmentTab(ttk.Frame):
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         pil = Image.fromarray(rgb)
         pil = pil.resize(_PREVIEW_SIZE, Image.LANCZOS)
-        return ImageTk.PhotoImage(pil)
+        return ImageTk.PhotoImage(rounded.round_corners(pil))

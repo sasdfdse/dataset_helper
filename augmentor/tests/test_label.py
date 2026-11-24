@@ -42,7 +42,7 @@ def test_clip_bbox_fully_outside():
 
 
 def test_clip_bbox_less_than_30_percent_remains():
-    # box x=[0.0, 0.2], clip region x=[0.18, 1.0] → only 10% of width remains
+    # box x=[0.0, 0.2], clip region x=[0.18, 1.0] -> only 10% of width remains
     b = BBox(0, 0.1, 0.5, 0.2, 0.2)
     result = clip_bbox(b, 0.18, 0.0, 1.0, 1.0)
     assert result is None

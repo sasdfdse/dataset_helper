@@ -15,8 +15,6 @@ def _solid_img(value: int = 128, h: int = 100, w: int = 100) -> np.ndarray:
     return np.full((h, w, 3), value, dtype=np.uint8)
 
 
-# --- brightness ---
-
 def test_brightness_increase():
     img = _solid_img(100)
     result = apply_brightness(img, 50)
@@ -36,8 +34,6 @@ def test_brightness_clip_low():
     assert np.all(result == 0)
 
 
-# --- blur ---
-
 def test_blur_preserves_shape():
     img = _solid_img()
     result = apply_blur(img, 3)
@@ -50,8 +46,6 @@ def test_blur_even_radius_accepted():
     result = apply_blur(img, 4)  # internally promoted to 5
     assert result.shape == img.shape
 
-
-# --- noise ---
 
 def test_noise_preserves_shape():
     img = _solid_img()
@@ -66,8 +60,6 @@ def test_noise_values_in_range():
     assert int(result.min()) >= 0
     assert int(result.max()) <= 255
 
-
-# --- scale ---
 
 def test_scale_up_preserves_shape():
     img = _solid_img()
@@ -98,8 +90,6 @@ def test_scale_up_center_still_bright():
     assert int(out_img[50, 50, 0]) == 200  # center should remain bright
 
 
-# --- cutmix ---
-
 def test_cutmix_preserves_shape():
     img_a = _solid_img(100)
     img_b = _solid_img(200)
@@ -118,8 +108,6 @@ def test_cutmix_patch_region_differs():
     assert int(out_img.max()) == 255
     assert int(out_img.min()) == 0
 
-
-# --- flip ---
 
 def test_flip_horizontal_updates_x():
     img = _solid_img()
@@ -154,7 +142,7 @@ def test_flip_preserves_size_and_w_h():
 
 def test_flip_horizontal_mirrors_pixels():
     img = np.zeros((10, 10, 3), dtype=np.uint8)
-    img[:, 0] = 255  # left column bright
+    img[:, 0] = 255
     out_img, _ = apply_flip(img, [], horizontal=True, vertical=False)
     assert int(out_img[0, 9, 0]) == 255  # right column should now be bright
     assert int(out_img[0, 0, 0]) == 0
@@ -162,13 +150,11 @@ def test_flip_horizontal_mirrors_pixels():
 
 def test_flip_vertical_mirrors_pixels():
     img = np.zeros((10, 10, 3), dtype=np.uint8)
-    img[0, :] = 255  # top row bright
+    img[0, :] = 255
     out_img, _ = apply_flip(img, [], horizontal=False, vertical=True)
     assert int(out_img[9, 0, 0]) == 255  # bottom row should now be bright
     assert int(out_img[0, 0, 0]) == 0
 
-
-# --- rotation ---
 
 def test_rotation_preserves_shape():
     img = _solid_img()
@@ -208,8 +194,6 @@ def test_rotation_output_dtype():
     assert out_img.dtype == np.uint8
 
 
-# --- crop ---
-
 def test_crop_preserves_shape():
     img = _solid_img()
     boxes = [BBox(0, 0.5, 0.5, 0.3, 0.3)]
@@ -230,8 +214,6 @@ def test_crop_output_dtype():
     out_img, _ = apply_crop(img, [], 0.9)
     assert out_img.dtype == np.uint8
 
-
-# --- shear ---
 
 def test_shear_preserves_shape():
     img = _solid_img()
@@ -255,8 +237,6 @@ def test_shear_output_dtype():
     assert out_img.dtype == np.uint8
 
 
-# --- grayscale ---
-
 def test_grayscale_preserves_shape():
     img = np.array([[[100, 150, 200]]], dtype=np.uint8)
     result = apply_grayscale(img)
@@ -268,8 +248,6 @@ def test_grayscale_all_channels_equal():
     result = apply_grayscale(img)
     assert int(result[0, 0, 0]) == int(result[0, 0, 1]) == int(result[0, 0, 2])
 
-
-# --- saturation ---
 
 def test_saturation_preserves_shape():
     img = _solid_img(128)
@@ -285,8 +263,6 @@ def test_saturation_zero_desaturates():
     assert int(result[0, 0, 0]) == int(result[0, 0, 1]) == int(result[0, 0, 2])
 
 
-# --- exposure ---
-
 def test_exposure_preserves_shape():
     img = _solid_img(100)
     result = apply_exposure(img, 1.5)
@@ -299,8 +275,6 @@ def test_exposure_clips_at_255():
     result = apply_exposure(img, 2.0)
     assert int(result.max()) <= 255
 
-
-# --- camera_gain ---
 
 def test_camera_gain_increases_brightness():
     img = _solid_img(100)
@@ -315,8 +289,6 @@ def test_camera_gain_clips_at_255():
     result = apply_camera_gain(img, 2.0)
     assert int(result.max()) <= 255
 
-
-# --- motion_blur ---
 
 def test_motion_blur_preserves_shape():
     img = _solid_img()
@@ -333,13 +305,11 @@ def test_motion_blur_even_kernel_accepted():
 
 def test_motion_blur_blurs_image():
     img = np.zeros((50, 50, 3), dtype=np.uint8)
-    img[:, 25:] = 255  # half white
+    img[:, 25:] = 255
     result = apply_motion_blur(img, 15, 0)
     # The sharp edge should be smoothed
     assert int(result[25, 20, 0]) != int(img[25, 20, 0]) or int(result[25, 30, 0]) != int(img[25, 30, 0])
 
-
-# --- mosaic ---
 
 def test_mosaic_preserves_shape():
     imgs = [_solid_img(i * 50) for i in range(4)]

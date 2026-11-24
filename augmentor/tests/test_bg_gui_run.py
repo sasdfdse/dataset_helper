@@ -17,7 +17,7 @@ class FakeWorker:
     script: list = []
     exit_code = 0
     stderr_last = ""
-    hold = None            # threading.Event: 설정돼 있으면 set될 때까지 종료하지 않음
+    hold = None            # threading.Event: when given, don't exit until it is set
     instances: list = []
 
     def __init__(self, args, on_event, on_exit):
@@ -112,7 +112,6 @@ def test_run_replays_events_updates_progress_and_loads_results(env):
     assert "완료" in tab._stage_lbl.cget("text")
     assert float(tab._progress.cget("value")) == float(tab._progress.cget("maximum"))
     assert not btn_disabled(tab, "run") and btn_disabled(tab, "stop")
-    # 결과 4패널 로드
     assert tab._results_mode and tab._nav_lbl.cget("text") == "1 / 2"
     for lbl in (tab._orig_lbl, tab._mask_lbl, tab._result_lbl, tab._diff_lbl):
         assert lbl.image is not None
@@ -157,14 +156,14 @@ def test_error_event_and_deps_hint(env):
     FakeWorker.exit_code = 5
     tab._btns["run"].invoke()
     assert pump(tab, lambda: not tab.is_running())
-    assert len(shown["error"]) == 1                 # 종료 코드로 중복 표시하지 않음
-    assert "필수 패키지" in shown["error"][0] and "pip install -r requirements-bg.txt" in shown["error"][0]
-    # 메시지에 이미 안내가 있으면 덧붙이지 않는다
+    assert len(shown["error"]) == 1                 # not shown again for the exit code
+    assert "필수 패키지" in shown["error"][0] and "make venv" in shown["error"][0]
+    # don't append the hint if the message already has it
     shown["error"].clear()
-    FakeWorker.script = [{"event": "error", "code": 5, "message": "x: pip install -r requirements-bg.txt"}]
+    FakeWorker.script = [{"event": "error", "code": 5, "message": "x: make venv 를 실행하세요"}]
     tab._btns["run"].invoke()
     assert pump(tab, lambda: not tab.is_running())
-    assert shown["error"][0].count("requirements-bg.txt") == 1
+    assert shown["error"][0].count("make venv") == 1
 
 
 @needs_display
@@ -197,8 +196,8 @@ def test_non_train_confirmation_sets_allow_for_that_run(env, tmp_path, monkeypat
     assert pump(tab, lambda: not tab.is_running())
     assert len(shown["yesno"]) == 1
     assert load_settings(out / "run_settings.json").allow_non_train is True
-    assert tab.build_settings().allow_non_train is False       # 영속 옵션이 아님
-    # 거절하면 실행하지 않는다
+    assert tab.build_settings().allow_non_train is False       # not a persisted option
+    # declining does not run
     FakeWorker.instances.clear()
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: False)
     tab._btns["run"].invoke()
@@ -216,8 +215,8 @@ def test_mismatch_overwrite_resets_output_then_runs(env, monkeypatch):
     assert pump(tab, lambda: not tab.is_running())
     assert asked == [["seed"]]
     assert not (out / "Manifest.jsonl").exists() and not (out / "Accepted").exists() \
-        and not (out / "masks").exists()                       # 실제 reset_output_dir 수행 (가짜 워커는 새로 쓰지 않음)
-    assert load_settings(out / "run_settings.json").seed == 0  # 새 설정이 저장됨
+        and not (out / "masks").exists()                       # reset_output_dir really ran (the fake worker writes nothing)
+    assert load_settings(out / "run_settings.json").seed == 0  # new settings saved
     assert FakeWorker.instances
 
 
@@ -229,13 +228,13 @@ def test_mismatch_cancel_and_new_folder(env, tmp_path, monkeypatch):
                   out / "run_settings.json")
     monkeypatch.setattr(tab, "_ask_mismatch", lambda diff: "cancel")
     tab._btns["run"].invoke()
-    assert not FakeWorker.instances and (out / "Manifest.jsonl").exists()   # 아무것도 지우지 않음
+    assert not FakeWorker.instances and (out / "Manifest.jsonl").exists()   # nothing deleted
     new = tmp_path / "fresh"
     monkeypatch.setattr(tab, "_ask_mismatch", lambda diff: "new")
     monkeypatch.setattr(filedialog, "askdirectory", lambda **k: str(new))
     tab._btns["run"].invoke()
     assert pump(tab, lambda: not tab.is_running())
-    assert (out / "Manifest.jsonl").exists()                 # 기존 출력 보존
+    assert (out / "Manifest.jsonl").exists()                 # existing output kept
     assert FakeWorker.instances[0].args[2] == str(new / "run_settings.json")
     assert tab._vars["output_dir"].get() == str(new)
 
@@ -269,15 +268,47 @@ def test_preview_uses_separate_settings_file_and_loads_preview_dir(env, tmp_path
     assert pump(tab, lambda: not tab.is_running())
     args = FakeWorker.instances[0].args
     assert args[0] == "preview" and args[3:] == ["--n", "3"]
-    assert not (out / "run_settings.json").exists()        # 이어하기 기준 파일을 건드리지 않음
+    assert not (out / "run_settings.json").exists()        # resume reference file untouched
     assert tab._results_mode and tab._result_dir == prev_dir and tab._nav_lbl.cget("text") == "1 / 1"
+
+
+@needs_display
+def test_preview_with_translations_shows_them_and_run_does_not(env, monkeypatch):
+    import gui.background_run as br
+    tab, shown, (images, labels, out) = env
+    made = []
+    monkeypatch.setattr(br, "ReportWindow", lambda parent, text, **kw: made.append((text, kw)))
+    translations = [{"kind": "keep", "source": "골대", "text": "goal post"},
+                    {"kind": "scene", "source": "체육관", "text": "gymnasium"}]
+    FakeWorker.script = [{"stage": "translate", "done": 2, "total": 2},
+                         {"event": "done", "preview_dir": str(out), "translations": translations}]
+    tab._btns["preview"].invoke()
+    assert pump(tab, lambda: not tab.is_running())
+    assert len(made) == 1
+    text, kw = made[0]
+    assert "골대 → goal post" in text and "체육관 → gymnasium" in text and "번역" in kw.get("title", "")
+    # Preview results load as usual
+    assert tab._results_mode and tab._result_dir == out
+    # Run shows no translation window (reuses the translation checked in Preview)
+    made.clear()
+    FakeWorker.script = [{"event": "done", "translations": translations}]
+    tab._btns["run"].invoke()
+    assert pump(tab, lambda: not tab.is_running())
+    assert made == [] and not shown["error"]
+
+
+@needs_display
+def test_translate_stage_label_is_korean(env):
+    tab, _, _ = env
+    tab._on_worker_event({"stage": "translate", "done": 1, "total": 3})
+    assert tab._stage_lbl.cget("text") == "단계: 번역 (1/3)"
 
 
 @needs_display
 def test_export_flow_and_done_message(env, monkeypatch, tmp_path):
     from tkinter import filedialog
     tab, shown, (images, labels, out) = env
-    tab._btns["export"].invoke()                     # run_settings.json 없음
+    tab._btns["export"].invoke()                     # no run_settings.json
     assert shown["error"] and not FakeWorker.instances
     save_settings(BackgroundSwapSettings(images_dir=images, labels_dir=labels, output_dir=out),
                   out / "run_settings.json")
@@ -314,7 +345,7 @@ def test_export_non_train_target_confirmed_writes_allow_settings(env, monkeypatc
 def test_report_button(env, monkeypatch):
     import json
     tab, shown, (images, labels, out) = env
-    tab._btns["report"].invoke()                     # report.json 없음
+    tab._btns["report"].invoke()                     # no report.json
     assert shown["info"]
     (out / "report.json").write_text(json.dumps(
         {"status_counts": {"accepted": 1}, "class_recall": {"ball": {"hits": 1, "total": 1, "recall": 1.0}},
@@ -371,7 +402,7 @@ def test_diff_panel_title_notes_jpeg_fallback(env):
     (out / "generated" / "a_bgswap1_a1.png").unlink()
     tab.load_results(out)
     assert "JPEG" in tab._titles[3][0].cget("text")
-    tab._step(1)                                  # PNG가 있는 레코드
+    tab._step(1)                                  # record with a PNG
     assert "JPEG" not in tab._titles[3][0].cget("text")
 
 
@@ -379,11 +410,64 @@ def test_diff_panel_title_notes_jpeg_fallback(env):
 @pytest.mark.parametrize("with_items", [True, False])
 def test_results_use_originals_from_items_not_widget_folders(env, with_items):
     tab, _, (images, labels, out) = env
-    oi, ol = make_other_dataset(out.parent)          # 같은 stem 'a'를 가진 다른 폴더
+    oi, ol = make_other_dataset(out.parent)          # another folder with the same stem 'a'
     tab.apply_settings(BackgroundSwapSettings(images_dir=oi, labels_dir=ol, output_dir=out))
     if not with_items:
-        (out / "items.jsonl").unlink()               # 예전 결과 폴더: 현재 위젯 폴더로 대체
+        (out / "items.jsonl").unlink()               # old result folder: falls back to the current widget folders
     assert tab.load_results(out)
     expected = (images / "a.png") if with_items else (oi / "a.png")
     assert tab._orig_index["a"].image_path == expected
-    assert tab._orig_lbl.image is not None           # 원본 패널이 표시됨
+    assert tab._orig_lbl.image is not None
+
+
+@needs_display
+def test_estimate_label_updates_live_before_run(env):
+    tab, _, _ = env
+    tab._update_estimate()
+    n = len(tab._items)
+    assert n > 0
+    text = tab._eta_lbl.cget("text")
+    assert text.startswith("Run 예상:") and f"{n:,}장 × 변형 3" in text
+    tab._vars["num_variants"].set("1")
+    assert pump(tab, lambda: f"× 변형 1 = {n:,}장" in tab._eta_lbl.cget("text"))
+
+
+@needs_display
+def test_run_shows_remaining_time_and_learns_speed(env):
+    from background_swap.common.hardware import HardwareProfile, load_profile, save_profile
+    tab, _, _ = env
+    tab._hw = HardwareProfile("Fake GPU", 7.6, 20.0)
+    save_profile(tab._hw, tab._hw_path)
+    FakeWorker.hold = threading.Event()
+    FakeWorker.script = [{"stage": "inpaint", "done": d, "total": 4} for d in range(4)]
+    tab._btns["run"].invoke()
+    assert pump(tab, lambda: "(3/4)" in tab._stage_lbl.cget("text"))
+    eta = tab._eta_lbl.cget("text")
+    assert eta.startswith("남은 시간:") and "완료 예상" in eta
+    FakeWorker.hold.set()
+    assert pump(tab, lambda: not tab.is_running())
+    assert pump(tab, lambda: "지난 Run: 걸린 시간" in tab._eta_lbl.cget("text"))
+    assert tab._eta_lbl.cget("text").startswith("Run 예상:")
+    # measured speed is saved to this PC's profile (tests are so fast they hit the floor)
+    assert any(k.startswith("inpaint|") for k in tab._hw.measured)
+    assert load_profile(tab._hw_path, "Fake GPU").measured == tab._hw.measured
+    assert tab._hw_path.parent != Path.home() / ".config" / "dataset_helper"
+
+
+@needs_display
+def test_hardware_probe_sets_profile_and_info_shows_it(env, monkeypatch):
+    from gui import background_tab
+    tab, _, _ = env
+    FakeWorker.script = [{"event": "done", "gpu": "Fake GPU 24GB", "vram_gb": 23.5, "tflops": 99.2}]
+    tab.start_hardware_probe()
+    assert FakeWorker.instances[-1].args == ["probe"]
+    assert pump(tab, lambda: tab._hw.gpu_name == "Fake GPU 24GB" and tab._probe is None)
+    assert tab._hw.load.inpaint_offload == "none" and tab._hw.base_factor < 1
+    windows = []
+    monkeypatch.setattr(background_tab, "ReportWindow", lambda parent, text, title, **k: windows.append((title, text)))
+    tab._info_btn.invoke()
+    (title, text), = windows
+    assert title.startswith("Info") and "Frame stride" in text and "Variants" in text
+    assert "Fake GPU 24GB" in text and "전부 GPU" in text
+    # values are not changed automatically
+    assert tab._vars["num_variants"].get() == "3"

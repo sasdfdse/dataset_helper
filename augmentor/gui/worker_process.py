@@ -74,8 +74,6 @@ class WorkerProcess:
                     pass
         threading.Thread(target=_kill_later, daemon=True).start()
 
-    # ── 읽기 스레드 ───────────────────────────────────────────────
-
     def _read_stderr(self, proc: subprocess.Popen) -> None:
         try:
             for line in proc.stderr:
@@ -94,7 +92,7 @@ class WorkerProcess:
                     try:
                         self._on_event(ev)
                     except Exception:
-                        pass            # 콜백 버그가 읽기 루프를 죽이지 않게 한다
+                        pass            # a buggy callback must not kill the reader loop
         except (OSError, ValueError):
             pass
         code = proc.wait()

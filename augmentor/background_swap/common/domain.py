@@ -27,7 +27,7 @@ class ImageItem:
 
 @dataclass
 class Detection:
-    box: tuple[float, float, float, float]  # 픽셀 xyxy
+    box: tuple[float, float, float, float]  # pixel xyxy
     score: float
     label: str
 

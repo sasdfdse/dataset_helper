@@ -41,11 +41,11 @@ def test_stop_is_safe_when_not_running_or_already_exited(tmp_path):
     script.write_text("pass\n")
     done = threading.Event()
     wp = WorkerProcess([], lambda e: None, lambda c, e: done.set(), command=[sys.executable, str(script)])
-    wp.stop()                     # 시작 전
+    wp.stop()                     # before start
     assert not wp.running
     wp.start()
     assert done.wait(10)
-    wp.stop()                     # 이미 종료
+    wp.stop()                     # already stopped
     assert not wp.running
 
 

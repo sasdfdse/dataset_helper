@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from background_swap.stages.composite import diff_image, draw_boxes, mask_overlay
+from background_swap.common.settings import axis_label
 from background_swap.common.domain import ACCEPTED, EXHAUSTED, REJECTED, SKIPPED, ImageItem
 from background_swap.dataset.inputs import collect_items, load_image_bgr
 from background_swap.common.store import read_jsonl, read_mask
@@ -42,11 +43,11 @@ class ResultList:
 
 @dataclass
 class Panels:
-    orig: np.ndarray       # 원본 + bbox
-    overlay: np.ndarray    # 마스크 오버레이
-    result: np.ndarray     # 생성 결과
-    diff: np.ndarray       # 차이 (보호 영역 변경은 빨강)
-    diff_note: str = ""    # 비어 있지 않으면 차이 패널 제목에 덧붙일 주의 문구
+    orig: np.ndarray
+    overlay: np.ndarray
+    result: np.ndarray
+    diff: np.ndarray       # diff (changes in protected areas shown in red)
+    diff_note: str = ""    # if set, appended to the diff panel title as a warning
 
 
 DIFF_JPEG_NOTE = "(JPEG 기준 — 압축 오차 포함)"
@@ -126,8 +127,8 @@ def load_panels(result_dir: Path, entry: ResultEntry, item: ImageItem) -> Panels
     masks_dir = Path(result_dir) / "masks"
     m = {name: _fit(read_mask(masks_dir / f"{entry.stem}_{name}.png"), shape)
          for name in ("object_core", "object_protect", "keep")}
-    # 차이 패널은 무손실 PNG 기준 (JPEG 압축 오차가 보호 영역에 빨강으로 나오는 것을 방지).
-    # PNG가 없으면 JPEG로 대체하고 그 사실을 알린다.
+    # Diff against the lossless PNG (JPEG artifacts would show up red in protected areas).
+    # Fall back to the JPEG and say so if the PNG is missing.
     lossless = load_image_bgr(generated_png_path(result_dir, entry))
     note = ""
     if lossless is None:
@@ -143,8 +144,6 @@ def load_panels(result_dir: Path, entry: ResultEntry, item: ImageItem) -> Panels
         result=result,
         diff=diff_image(orig, result_fit, protect), diff_note=note)
 
-
-# ── 문구 ──────────────────────────────────────────────────────────
 
 def _fmt_value(v) -> str:
     if isinstance(v, bool):
@@ -178,7 +177,7 @@ def describe_record(record: dict) -> str:
     lines = [
         f"상태: {record.get('status', '?')}    사유: {', '.join(reasons) if reasons else '–'}",
         f"checks: {_checks_summary(record.get('checks')) or '–'}",
-        "장면: " + (", ".join(f"{k}={v}" for k, v in scene.items()) if scene else "–"),
+        "배경 조합: " + (", ".join(f"{axis_label(k)}={v}" for k, v in scene.items()) if scene else "–"),
         f"프롬프트: {record.get('prompt') or '–'}",
     ]
     return "\n".join(lines)
@@ -199,7 +198,7 @@ def _counts_block(title: str, counts) -> list[str]:
 
 
 def format_report(report: dict) -> str:
-    """report.json 요약: 상태/사유 집계, 장면 축 분포, 클래스별 recall, 단계별 시간, note."""
+    """report.json 요약: 상태/사유 집계, 배경 조합 분포, 클래스별 recall, 단계별 시간, note."""
     lines: list[str] = []
     lines += _counts_block("[상태]", report.get("status_counts"))
     lines += _counts_block("[거절/스킵 사유]", report.get("reason_counts"))
@@ -207,7 +206,7 @@ def format_report(report: dict) -> str:
     for which, title in (("all", "전체"), ("accepted", "accepted")):
         axes = scene.get(which) or {}
         for axis, values in axes.items():
-            lines += _counts_block(f"[장면 축 {axis} — {title}]", values)
+            lines += _counts_block(f"[배경 조합: {axis_label(axis)} — {title}]", values)
     recall = report.get("class_recall")
     if isinstance(recall, dict) and recall:
         lines.append("[클래스별 recall (Grounding DINO)]")
@@ -229,6 +228,42 @@ def format_report(report: dict) -> str:
     if report.get("note"):
         lines.append(f"※ {report['note']}")
     return "\n".join(lines).strip() or "리포트가 비어 있습니다."
+
+
+_TRANSLATION_GROUPS = (("keep", "유지 항목"), ("scene", "배경 조합"), ("class", "클래스 이름"))
+
+
+def format_translations(translations) -> str:
+    """워커 done 이벤트의 translations 목록을 종류별 '원문 → 번역' 문구로. 없으면 빈 문자열."""
+    rows = [t for t in translations or [] if isinstance(t, dict)
+            and isinstance(t.get("source"), str) and isinstance(t.get("text"), str)]
+    if not rows:
+        return ""
+    lines = ["한국어 입력을 아래처럼 영어로 바꿔서 모든 단계(검출, 인페인팅, 검증)에 썼습니다.", ""]
+    for kind, title in _TRANSLATION_GROUPS:
+        group = [t for t in rows if t.get("kind") == kind]
+        if group:
+            lines += [f"[{title}]"] + [f"  {t['source']} → {t['text']}" for t in group] + [""]
+    lines += ["Run도 이 번역을 그대로 씁니다 (출력 폴더의 translations.json에 저장).",
+              "번역이 틀렸으면 그 항목을 영어로 직접 입력한 뒤 다시 Preview하세요."]
+    return "\n".join(lines)
+
+
+def format_references(references) -> str:
+    """워커 done 이벤트의 references 목록을 항목별 '파일 → 설명' 문구로. 없으면 빈 문자열."""
+    rows = [r for r in references or [] if isinstance(r, dict)
+            and isinstance(r.get("file"), str) and isinstance(r.get("text"), str)]
+    if not rows:
+        return ""
+    lines = ["참고 사진을 VLM이 아래처럼 설명했고, 각 항목의 후보 값에 더해 썼습니다.", ""]
+    axes = list(dict.fromkeys(str(r.get("axis", "")) for r in rows))
+    for axis in axes:
+        lines.append(f"[{axis_label(axis)}]")
+        lines += [f"  {r['file']} → {r['text']}" for r in rows if str(r.get("axis", "")) == axis]
+        lines.append("")
+    lines += ["Run도 이 설명을 그대로 씁니다 (출력 폴더의 references.json에 저장).",
+              "설명이 사진과 다르면 그 항목 칸에 원하는 문구를 직접 적으세요."]
+    return "\n".join(lines)
 
 
 def format_export_message(event: dict) -> str:

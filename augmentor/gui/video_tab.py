@@ -3,9 +3,10 @@ from pathlib import Path
 from typing import Optional
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 
 from core.video import VideoInfo, get_video_info, convert_to_mp4, extract_frames
+from gui import app_prefs, theme
 
 
 _MODES = ["WEBM → MP4 변환", "동영상 → 프레임 추출", "WEBM → MP4 → 프레임 추출 (연속)", "동영상 정보 보기"]
@@ -16,11 +17,13 @@ class VideoTab(ttk.Frame):
         super().__init__(parent)
         self._running = False
         self._build_ui()
+        for key, var in (("video.input", self._input_var), ("video.output", self._output_var)):
+            var.set(app_prefs.recall_path(key))
+            var.trace_add("write", lambda *a, k=key, v=var: app_prefs.remember_path(k, v.get()))
 
     def _build_ui(self):
         self.columnconfigure(0, weight=1)
 
-        # Input
         inp_frame = ttk.LabelFrame(self, text="Input", padding=8)
         inp_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
         inp_frame.columnconfigure(1, weight=1)
@@ -35,7 +38,6 @@ class VideoTab(ttk.Frame):
         ttk.Entry(inp_frame, textvariable=self._output_var).grid(row=1, column=1, sticky="ew", padx=4, pady=(4, 0))
         ttk.Button(inp_frame, text="Browse", command=self._browse_output).grid(row=1, column=2, pady=(4, 0))
 
-        # Mode selection
         mode_frame = ttk.LabelFrame(self, text="작업 선택", padding=8)
         mode_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
 
@@ -45,7 +47,6 @@ class VideoTab(ttk.Frame):
                                  command=self._on_mode_change)
             rb.pack(anchor="w")
 
-        # Extract options
         self._extract_frame = ttk.LabelFrame(self, text="프레임 추출 옵션", padding=8)
         self._extract_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=4)
 
@@ -59,13 +60,12 @@ class VideoTab(ttk.Frame):
         ttk.Checkbutton(self._extract_frame, text="그레이스케일", variable=self._gray_var).pack(
             side=tk.LEFT, padx=8)
 
-        # Info display
         self._info_frame = ttk.LabelFrame(self, text="동영상 정보", padding=8)
         self._info_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=4)
-        self._info_text = tk.Text(self._info_frame, height=7, state=tk.DISABLED, font=("Courier", 10))
+        self._info_text = tk.Text(self._info_frame, height=7, state=tk.DISABLED, font=("Courier", 10),
+                                  bg=theme.ENTRY, fg=theme.FG, relief="flat", highlightthickness=0)
         self._info_text.pack(fill=tk.X)
 
-        # Progress + run
         bottom = ttk.Frame(self)
         bottom.grid(row=4, column=0, sticky="ew", padx=8, pady=8)
         bottom.columnconfigure(0, weight=1)
@@ -80,13 +80,11 @@ class VideoTab(ttk.Frame):
         self._run_btn = ttk.Button(bottom, text="▶ Run", command=self._on_run)
         self._run_btn.grid(row=2, column=0, pady=4)
 
-        self._on_mode_change()  # set initial visibility
-
-    # ── File browsing ────────────────────────────────────────────────
+        self._on_mode_change()
 
     def _browse_input(self):
-        path = filedialog.askopenfilename(
-            title="Select video file",
+        path = app_prefs.ask_open_file(
+            "Select video file", self._input_var.get(),
             filetypes=[("Video files", "*.webm *.mp4 *.avi *.mkv *.mov"), ("All", "*.*")],
         )
         if not path:
@@ -102,17 +100,15 @@ class VideoTab(ttk.Frame):
     def _browse_output(self):
         mode = self._mode_var.get()
         if mode in (1, 2):
-            path = filedialog.askdirectory(title="Select output directory")
+            path = app_prefs.ask_directory("Select output directory", self._output_var.get())
         else:
-            path = filedialog.asksaveasfilename(
-                title="Save MP4 as",
+            path = app_prefs.ask_save_file(
+                "Save MP4 as", self._output_var.get(),
                 defaultextension=".mp4",
                 filetypes=[("MP4", "*.mp4")],
             )
         if path:
             self._output_var.set(path)
-
-    # ── Mode switch ──────────────────────────────────────────────────
 
     def _on_mode_change(self):
         mode = self._mode_var.get()
@@ -124,8 +120,6 @@ class VideoTab(ttk.Frame):
             self._info_frame.grid()
         else:
             self._info_frame.grid_remove()
-
-    # ── Run ─────────────────────────────────────────────────────────
 
     def _on_run(self):
         if self._running:

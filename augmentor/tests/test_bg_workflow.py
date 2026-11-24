@@ -72,7 +72,7 @@ def test_skipped_items_recorded_once(tmp_path):
 
 
 def test_class_names_enable_gdino_new_object_check(tmp_path):
-    det = FakeDetector({"robot": [Detection((1, 1, 5, 5), 0.9, "robot")]})   # 배경 영역 새 객체
+    det = FakeDetector({"robot": [Detection((1, 1, 5, 5), 0.9, "robot")]})   # new object in the background area
     s = _settings(tmp_path, n_images=1, num_variants=1, max_attempts=1, use_vlm=False)
     BackgroundSwapWorkflow(s, FakeFactory.default(detector=det), NullProgress(), ["robot"]).run()
     r = read_jsonl(s.output_dir/"Manifest.jsonl")[0]
@@ -104,8 +104,6 @@ def test_run_preview_uses_isolated_dir(tmp_path):
     assert d == s.output_dir/"_preview"
     assert len(read_jsonl(d/"Manifest.jsonl")) == 2 and not (s.output_dir/"Manifest.jsonl").exists()
 
-
-# --- 추가 검증 (구현 결정 고정) ---
 
 def test_resume_after_crash_in_later_round_continues_rounds(tmp_path):
     """라운드 1이 끝난 뒤 크래시 → 재실행 시 라운드 1은 대상이 없어도 라운드 2를 계속한다."""
@@ -155,7 +153,7 @@ def test_draw_boxes_returns_copy_with_class_color():
     img = np.zeros((20, 20, 3), np.uint8)
     out = draw_boxes(img, [BBox(0, 0.5, 0.5, 0.5, 0.5)])
     assert img.sum() == 0
-    assert tuple(out[5, 10]) == (0x44, 0x44, 0xFF)   # "#FF4444" → BGR
+    assert tuple(out[5, 10]) == (0x44, 0x44, 0xFF)   # "#FF4444" -> BGR
 
 
 class _ShortValidator(FakeValidator):
@@ -196,7 +194,7 @@ class _FixedPromptGen:
         return [self.text] * len(requests)
 
 
-# 두 번째 출력은 밑줄/콜론이 없어 settings.scene_axes가 정확히 전달돼야만 걸러진다.
+# The second output has no underscore/colon, so it is caught only if settings.scene_axes is passed through.
 @pytest.mark.parametrize("bad", ["Surroundings_floor: x", "venue, lighting"])
 def test_keyword_llm_output_falls_back_to_template(tmp_path, bad):
     s = _settings(tmp_path, n_images=2, num_variants=2, use_llm=True, use_vlm=False)
@@ -209,7 +207,7 @@ def test_keyword_llm_output_falls_back_to_template(tmp_path, bad):
         tpl = TemplatePromptGenerator().generate_batch([PromptRequest(j["scene"], [], j["seed"])])[0]
         assert j["prompt"] == sanitize_prompt(tpl, [])
         assert j["prompt"] != bad
-    assert len({j["prompt"] for j in jobs}) > 1   # 장면별로 각자의 템플릿 사용
+    assert len({j["prompt"] for j in jobs}) > 1   # each scene uses its own template
 
 
 def test_llm_output_class_names_removed_in_workflow(tmp_path):
@@ -235,10 +233,8 @@ def test_vlm_pairing_across_batch_boundary(tmp_path):
                     ("img_003", "accepted"), ("img_004", "rejected")]
 
 
-# --- 리포트용 recall / timings ---
-
 def _robot_det():
-    # 라벨 "0 0.5 0.5 0.3 0.3" @ 64x48 → xyxy (22, 17, 41, 31)
+    # label "0 0.5 0.5 0.3 0.3" @ 64x48 -> xyxy (22, 17, 41, 31)
     return FakeDetector({"robot": [Detection((22, 17, 41, 31), 0.9, "robot")]})
 
 
@@ -248,7 +244,7 @@ def test_recall_written_once_and_reuses_mask_context(tmp_path):
     BackgroundSwapWorkflow(s, f, NullProgress(), ["robot"]).run()
     assert json.loads((s.output_dir/"recall.json").read_text()) == {"robot": [1, 1]}
     assert f.opened.count("mask_models") == 1
-    # "detector" 컨텍스트는 validate 단계의 1회뿐 (recall용 추가 컨텍스트 없음)
+    # "detector" opens once, in validate (no extra context for recall)
     assert f.opened.count("detector") == 1
     f2 = FakeFactory.default(detector=_robot_det())
     BackgroundSwapWorkflow(s, f2, NullProgress(), ["robot"]).run()
@@ -263,7 +259,7 @@ def test_recall_opens_detector_when_masks_already_done(tmp_path):
     f2 = FakeFactory.default(detector=_robot_det())
     BackgroundSwapWorkflow(s, f2, NullProgress(), ["robot"]).run()
     assert json.loads((s.output_dir/"recall.json").read_text()) == {"robot": [1, 1]}
-    # 결과가 모두 끝난 상태라 validate는 열리지 않음 → recall용 detector 1회뿐
+    # everything is done so validate doesn't open -> one detector for recall
     assert f2.opened == ["detector"]
 
 
@@ -283,14 +279,14 @@ def test_timings_accumulate_across_runs(tmp_path):
     assert all(t2[k] >= t1[k] for k in t1)
 
 
-@pytest.mark.parametrize("label", ["0 0.5 0.5 0.3 0.3 0.91\n",            # 신뢰도 열 (6필드)
-                                   "0 0.5 0.5 0.3 0.3\n0 0.1 0.1\n",       # 일부 줄만 잘못됨
-                                   "0.0 0.5 0.5 0.3 0.3\n",                # 실수형 클래스
-                                   "0 0.5 abc 0.3 0.3\n"])                 # 숫자가 아님
+@pytest.mark.parametrize("label", ["0 0.5 0.5 0.3 0.3 0.91\n",            # confidence column (6 fields)
+                                   "0 0.5 0.5 0.3 0.3\n0 0.1 0.1\n",       # only some lines invalid
+                                   "0.0 0.5 0.5 0.3 0.3\n",                # float class id
+                                   "0 0.5 abc 0.3 0.3\n"])                 # not a number
 def test_unsupported_label_format_skipped_and_run_continues(tmp_path, label):
     s = _settings(tmp_path, n_images=2, use_llm=False, num_variants=1, max_attempts=1)
     (s.labels_dir / "img_000.txt").write_text(label)
-    for _ in range(2):     # 재실행해도 스킵 레코드는 한 번만
+    for _ in range(2):     # a rerun records the skip only once
         BackgroundSwapWorkflow(s, FakeFactory.default(), NullProgress(), []).run()
     m = read_jsonl(s.output_dir / "Manifest.jsonl")
     assert [(r["stem"], r["status"], r["reasons"]) for r in m] == [

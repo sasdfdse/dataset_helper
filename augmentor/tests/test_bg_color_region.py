@@ -9,7 +9,7 @@ GREEN = (40, 160, 40)   # BGR
 def _field_with_line():
     img = np.full((100, 100, 3), (200, 200, 200), np.uint8)
     img[20:80, 10:90] = GREEN
-    img[47:53, 20:80] = (255, 255, 255)            # 필드 안의 흰 라인 (6px 두께: 5x5 CLOSE가 메우지 못함; 양끝은 연결 유지)
+    img[47:53, 20:80] = (255, 255, 255)            # white line in the field (6px: too thick for the 5x5 CLOSE to fill; ends stay connected)
     return img
 
 
@@ -31,7 +31,7 @@ def test_without_hull_line_is_excluded():
 
 
 def test_largest_only_drops_small_blob():
-    img = _field_with_line(); img[86:98, 2:14] = GREEN       # 모폴로지로 지워지지 않는 12px 블롭
+    img = _field_with_line(); img[86:98, 2:14] = GREEN       # 12px blob that morphology doesn't remove
     lo, hi = hsv_range_from_click(img, 30, 30, 10, 60, 60)
     assert not color_mask(img, lo, hi, largest_only=True, convex_hull=False)[92, 8]
     assert color_mask(img, lo, hi, largest_only=False, convex_hull=False)[92, 8]

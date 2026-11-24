@@ -1,0 +1,5 @@
+# Background Swap deps, Large preset (default: SDXL inpainting, Qwen2.5-3B, Qwen2.5-VL-3B check, SAM2.1-small).
+# Everything in Small plus the two below.
+-r requirements-bg-small.txt
+bitsandbytes  # loads the VLM (and the LLM on small VRAM) in 4bit
+peft          # fast mode: fuses the Hyper-SD LoRA into the SDXL inpainter

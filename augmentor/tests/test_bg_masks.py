@@ -94,8 +94,6 @@ def test_segmenter_called_once_for_large_boxes_only():
     assert len(seg.calls) == 1 and len(seg.calls[0]) == 1
 
 
-# --- 추가 테스트 (controller rulings) ---
-
 def test_keep_text_unions_segmented_boxes_and_uses_thresholds():
     det = FakeDetector({"fence": [Detection((10, 10, 30, 30), 0.9, "fence"),
                                   Detection((60, 60, 80, 80), 0.8, "fence")]})
@@ -126,8 +124,6 @@ def test_required_color_keep_missing_skips_with_complement_inpaint():
     assert ms.skip_reason == "required_keep_missing:field"
     assert (ms.inpaint == ~(ms.object_protect | ms.keep)).all()
 
-
-# --- fix round 1: bbox_to_xyxy / shadow extent / SAM rules ---
 
 def test_bbox_to_xyxy_exact_margin_zero_and_tenth():
     b = BBox(0, .5, .5, .1, .1)
